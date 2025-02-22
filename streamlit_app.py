@@ -1,176 +1,155 @@
 import streamlit as st
 import pandas as pd
 import re
-from datetime import timedelta
 from io import BytesIO
+from datetime import datetime
 
-# Fungsi untuk mengekstrak 6 digit pertama Nomor SP2D dari kolom Keterangan
+# Fungsi untuk ekstraksi SP2D dengan regex yang lebih robust
 def extract_sp2d_number(description):
-    match = re.search(r'\b\d{6}\b', str(description))  # Pastikan description adalah string
+    # Mencari 6 digit angka yang mungkin merupakan SP2D
+    match = re.search(r'(?<!\d)\d{6}(?!\d)', str(description))
     return match.group(0) if match else None
 
-# Fungsi untuk melakukan vouching utama
+# Fungsi utama untuk proses vouching dengan optimasi
+@st.cache_data
 def perform_vouching(rk_df, sp2d_df):
-    matched_rk = []
-    unmatched_rk = []
-    matched_sp2d = []
-    unmatched_sp2d = []
+    # Preprocessing data
+    rk_df = rk_df.copy()
+    sp2d_df = sp2d_df.copy()
+    
+    # Ekstraksi nomor SP2D
+    rk_df['NoSP2D_6digits'] = rk_df['Keterangan'].apply(extract_sp2d_number)
+    sp2d_df['NoSP2D_6digits'] = sp2d_df['NoSP2D'].astype(str).str[:6]
+    
+    # Konversi tipe data
+    numeric_cols = ['Jumlah']
+    for col in numeric_cols:
+        rk_df[col] = pd.to_numeric(rk_df[col], errors='coerce')
+        sp2d_df[col] = pd.to_numeric(sp2d_df[col], errors='coerce')
+    
+    # Membuat kunci unik
+    rk_df['key'] = rk_df['NoSP2D_6digits'] + '_' + rk_df['Jumlah'].astype(str)
+    sp2d_df['key'] = sp2d_df['NoSP2D_6digits'] + '_' + sp2d_df['Jumlah'].astype(str)
+    
+    # Proses matching
+    merged = rk_df.merge(
+        sp2d_df[['key', 'NoSP2D', 'TglSP2D', 'SKPD']],
+        on='key',
+        how='left',
+        suffixes=('', '_SP2D')
+    )
+    
+    # Klasifikasi data
+    matched_mask = merged['NoSP2D'].notna()
+    matched_rk = merged[matched_mask]
+    unmatched_rk = merged[~matched_mask]
+    
+    # Identifikasi SP2D yang tidak terpakai
+    used_sp2d_keys = set(matched_rk['key'])
+    unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d_keys)]
+    
+    return matched_rk, unmatched_rk, sp2d_df, unmatched_sp2d
 
-    # Membuat dictionary untuk SP2D agar pencarian lebih cepat
-    sp2d_dict = {str(row['NoSP2D'])[:6]: row for _, row in sp2d_df.iterrows()}
-
-    # Proses vouching untuk setiap baris di RK
-    progress_bar = st.progress(0)
-    total_rows = len(rk_df)
-    for i, rk_row in rk_df.iterrows():
-        sp2d_number = extract_sp2d_number(rk_row.get('Keterangan', ''))
-        if sp2d_number and sp2d_number in sp2d_dict:
-            sp2d_row = sp2d_dict[sp2d_number]
-            if rk_row.get('Jumlah') == sp2d_row.get('Jumlah'):
-                matched_rk.append({
-                    'Tanggal': rk_row.get('Tanggal'),
-                    'Keterangan': rk_row.get('Keterangan'),
-                    'Jumlah (Rp)': rk_row.get('Jumlah'),
-                    'NO SP2D': sp2d_row.get('NoSP2D')
-                })
-                matched_sp2d.append(sp2d_row)
-            else:
-                unmatched_rk.append({
-                    'Tanggal': rk_row.get('Tanggal'),
-                    'Keterangan': rk_row.get('Keterangan'),
-                    'Jumlah (Rp)': rk_row.get('Jumlah'),
-                    'NO SP2D': sp2d_number
-                })
-        else:
-            unmatched_rk.append({
-                'Tanggal': rk_row.get('Tanggal'),
-                'Keterangan': rk_row.get('Keterangan'),
-                'Jumlah (Rp)': rk_row.get('Jumlah'),
-                'NO SP2D': sp2d_number
-            })
-
-        # Update progress bar
-        progress_bar.progress((i + 1) / total_rows)
-
-    # Menentukan transaksi SP2D yang tidak cocok
-    sp2d_numbers_in_rk = {row['NO SP2D'] for row in matched_rk}
-    for _, sp2d_row in sp2d_df.iterrows():
-        no_sp2d = str(sp2d_row.get('NoSP2D', ''))[:6]
-        if no_sp2d not in sp2d_numbers_in_rk:
-            unmatched_sp2d.append(sp2d_row)
-
-    return matched_rk, unmatched_rk, matched_sp2d, unmatched_sp2d
-
-# Fungsi untuk mencari alternatif berdasarkan jumlah, tanggal, dan SKPD
+# Fungsi untuk pencarian alternatif dengan vectorization
 def find_alternative_matches(unmatched_rk, sp2d_df):
-    alternative_matches = []
-    for rk_row in unmatched_rk:
-        rk_amount = rk_row['Jumlah (Rp)']
-        rk_date = pd.to_datetime(rk_row['Tanggal'])
-        rk_description = str(rk_row['Keterangan']).lower()
+    # Konversi ke datetime
+    unmatched_rk['Tanggal'] = pd.to_datetime(unmatched_rk['Tanggal'])
+    sp2d_df['TglSP2D'] = pd.to_datetime(sp2d_df['TglSP2D'])
+    
+    # Merge berdasarkan jumlah
+    merged = unmatched_rk.merge(
+        sp2d_df,
+        on='Jumlah',
+        suffixes=('_RK', '_SP2D')
+    )
+    
+    # Filter berdasarkan tanggal dan SKPD
+    merged['date_diff'] = (merged['Tanggal'] - merged['TglSP2D']).abs().dt.days
+    merged['skpd_match'] = merged.apply(
+        lambda x: str(x['SKPD']).lower() in str(x['Keterangan']).lower(),
+        axis=1
+    )
+    
+    # Kriteria alternatif
+    alt_matches = merged[
+        (merged['date_diff'] <= 1) &
+        (merged['skpd_match'])
+    ].drop_duplicates(subset=['Jumlah', 'Tanggal'], keep='first')
+    
+    return alt_matches
 
-        # Cari SP2D yang sesuai dengan kriteria alternatif
-        for _, sp2d_row in sp2d_df.iterrows():
-            sp2d_amount = sp2d_row['Jumlah']
-            sp2d_date = pd.to_datetime(sp2d_row['TglSP2D'])
-            sp2d_skpd = str(sp2d_row['SKPD']).lower()
+# Fungsi untuk membuat output Excel
+def create_output(matched_rk, unmatched_rk, matched_sp2d, unmatched_sp2d, alt_matches):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # RK sheets
+        matched_rk[['Tanggal', 'Keterangan', 'Jumlah', 'NoSP2D']].to_excel(
+            writer, sheet_name='RK Matched', index=False)
+        
+        unmatched_rk[['Tanggal', 'Keterangan', 'Jumlah']].to_excel(
+            writer, sheet_name='RK Unmatched', index=False)
+        
+        # SP2D sheets
+        matched_sp2d.to_excel(writer, sheet_name='SP2D Matched', index=False)
+        unmatched_sp2d.to_excel(writer, sheet_name='SP2D Unmatched', index=False)
+        
+        # Alternative matches
+        if not alt_matches.empty:
+            alt_matches[['Tanggal', 'Keterangan', 'Jumlah', 'NoSP2D']].to_excel(
+                writer, sheet_name='Alternative Matches', index=False)
+    
+    output.seek(0)
+    return output
 
-            # Kriteria alternatif: jumlah sama, tanggal selisih <= 1 hari, dan SKPD ada di uraian RK
-            if (rk_amount == sp2d_amount and
-                abs((rk_date - sp2d_date).days) <= 1 and
-                sp2d_skpd in rk_description):
-                alternative_matches.append({
-                    'Tanggal': rk_row['Tanggal'],
-                    'Keterangan': rk_row['Keterangan'],
-                    'Jumlah (Rp)': rk_row['Jumlah (Rp)'],
-                    'NO SP2D': sp2d_row['NoSP2D'],
-                    'Status': 'Alternative Match'
-                })
-                break
-
-    return alternative_matches
-
-# Fungsi untuk menambahkan hasil vouching ke file RK
-def add_vouching_to_rk(rk_df, matched_rk, unmatched_rk, alternative_matches):
-    rk_df['Keterangan_Vouching'] = "Unmatched"  # Default: Unmatched
-
-    # Isi kolom Keterangan_Vouching untuk transaksi matched
-    for row in matched_rk:
-        mask = (rk_df['Keterangan'].str.contains(str(row['NO SP2D']), na=False)) & \
-               (rk_df['Jumlah'] == row['Jumlah (Rp)'])
-        rk_df.loc[mask, 'Keterangan_Vouching'] = row['NO SP2D']
-
-    # Isi kolom Keterangan_Vouching untuk transaksi alternatif
-    for row in alternative_matches:
-        mask = (rk_df['Keterangan'].str.contains(str(row['NO SP2D']), na=False)) & \
-               (rk_df['Jumlah'] == row['Jumlah (Rp)'])
-        rk_df.loc[mask, 'Keterangan_Vouching'] = f"Alternative Match: {row['NO SP2D']}"
-
-    return rk_df
-
-# Antarmuka Streamlit
+# UI
 st.title("Aplikasi Vouching SP2D vs Rekening Koran")
 
 # Upload file
-rk_file = st.file_uploader("Upload File Rekening Koran (Excel)", type=["xlsx"])
-sp2d_file = st.file_uploader("Upload File SP2D (Excel)", type=["xlsx"])
+rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
+sp2d_file = st.file_uploader("Upload SP2D", type="xlsx")
 
 if rk_file and sp2d_file:
     try:
-        # Baca file Excel
+        # Membaca file
         rk_df = pd.read_excel(rk_file)
         sp2d_df = pd.read_excel(sp2d_file)
-
+        
         # Validasi kolom
-        required_columns_rk = {'Tanggal', 'Keterangan', 'Jumlah'}
-        required_columns_sp2d = {'SKPD', 'NoSP2D', 'TglSP2D', 'Jumlah'}
-
-        if not required_columns_rk.issubset(rk_df.columns):
-            st.error(f"File Rekening Koran tidak memiliki kolom yang diperlukan: {required_columns_rk}")
+        required_rk = {'Tanggal', 'Keterangan', 'Jumlah'}
+        required_sp2d = {'SKPD', 'NoSP2D', 'TglSP2D', 'Jumlah'}
+        
+        if not required_rk.issubset(rk_df.columns):
+            st.error(f"Kolom RK harus mengandung: {required_rk}")
             st.stop()
-
-        if not required_columns_sp2d.issubset(sp2d_df.columns):
-            st.error(f"File SP2D tidak memiliki kolom yang diperlukan: {required_columns_sp2d}")
+            
+        if not required_sp2d.issubset(sp2d_df.columns):
+            st.error(f"Kolom SP2D harus mengandung: {required_sp2d}")
             st.stop()
-
-        # Membersihkan data
-        sp2d_df['NoSP2D'] = sp2d_df['NoSP2D'].astype(str).str.strip()
-        sp2d_df['TglSP2D'] = pd.to_datetime(sp2d_df['TglSP2D'])
-        rk_df['Keterangan'] = rk_df['Keterangan'].astype(str).str.strip()
-        rk_df['Tanggal'] = pd.to_datetime(rk_df['Tanggal'])
-
-        # Tombol untuk memulai vouching
-        if st.button("Mulai Vouching"):
-            matched_rk, unmatched_rk, matched_sp2d, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
-
-            # Cari alternatif untuk transaksi unmatched
-            alternative_matches = find_alternative_matches(unmatched_rk, sp2d_df)
-
-            # Tampilkan hasil
-            st.subheader("Hasil Vouching")
-            st.write("Rekening Koran Matched:")
-            st.dataframe(matched_rk)
-            st.write("Rekening Koran Unmatched:")
-            st.dataframe(unmatched_rk)
-            st.write("Rekening Koran Alternative Matches:")
-            st.dataframe(alternative_matches)
-
-            # Tambahkan hasil vouching ke file RK
-            rk_df = add_vouching_to_rk(rk_df, matched_rk, unmatched_rk, alternative_matches)
-
-            # Simpan hasil ke file Excel
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                rk_df.to_excel(writer, sheet_name='Rekening Koran', index=False)
-                sp2d_df.to_excel(writer, sheet_name='SP2D', index=False)
-            output.seek(0)
-
-            st.download_button(
-                label="Unduh Hasil Vouching",
-                data=output,
-                file_name="hasil_vouching.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
+        
+        # Proses vouching
+        with st.spinner('Memproses data...'):
+            matched_rk, unmatched_rk, sp2d_full, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
+            alt_matches = find_alternative_matches(unmatched_rk, sp2d_df)
+        
+        # Tampilkan statistik
+        st.subheader("Statistik")
+        cols = st.columns(3)
+        cols[0].metric("RK Matched", len(matched_rk))
+        cols[1].metric("RK Unmatched", len(unmatched_rk))
+        cols[2].metric("Alternative Matches", len(alt_matches))
+        
+        # Download hasil
+        output = create_output(matched_rk, unmatched_rk, 
+                             sp2d_full[sp2d_full['key'].isin(matched_rk['key'])], 
+                             unmatched_sp2d, alt_matches)
+        
+        st.download_button(
+            label="Unduh Hasil Lengkap",
+            data=output,
+            file_name=f"vouching_result_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Terjadi kesalahan: {str(e)}")
+        st.stop()
