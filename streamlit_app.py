@@ -71,6 +71,17 @@ def perform_vouching(rk_df, sp2d_df):
 
     return matched_rk_df, unmatched_rk_df, matched_sp2d_df, unmatched_sp2d_df
 
+# Fungsi untuk menyimpan hasil ke file Excel
+def save_to_excel(matched_rk_df, unmatched_rk_df, matched_sp2d_df, unmatched_sp2d_df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        matched_rk_df.to_excel(writer, sheet_name='RK_Matched', index=False)
+        unmatched_rk_df.to_excel(writer, sheet_name='RK_Unmatched', index=False)
+        matched_sp2d_df.to_excel(writer, sheet_name='SP2D_Matched', index=False)
+        unmatched_sp2d_df.to_excel(writer, sheet_name='SP2D_Unmatched', index=False)
+    output.seek(0)
+    return output
+
 # Antarmuka Streamlit
 st.title("Aplikasi Vouching SP2D vs Rekening Koran")
 
