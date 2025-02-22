@@ -3,7 +3,7 @@ import pandas as pd
 import re
 from io import BytesIO
 
-#Fungsi untuk mengekstrak 6 digit pertama Nomor SP2D dari kolom Keterangan
+# Fungsi untuk mengekstrak 6 digit pertama Nomor SP2D dari kolom Keterangan
 def extract_sp2d_number(description):
     match = re.search(r'\b\d{6}\b', description)
     return match.group(0) if match else None
