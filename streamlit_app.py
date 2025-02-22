@@ -18,7 +18,11 @@ def perform_vouching(rk_df, sp2d_df):
 
     # Membuat dictionary untuk SP2D agar pencarian lebih cepat
     sp2d_dict = {row['NoSP2D'][:6]: row for _, row in sp2d_df.iterrows()}
-
+    
+    # Cek nama kolom
+    st.write("Nama kolom Rekening Koran:", rk_df.columns.tolist())
+    st.write("Nama kolom SP2D:", sp2d_df.columns.tolist())
+    
     # Proses vouching untuk setiap baris di RK
     progress_bar = st.progress(0)
     total_rows = len(rk_df)
