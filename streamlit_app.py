@@ -71,14 +71,42 @@ def perform_vouching(rk_df, sp2d_df):
 
     return matched_rk_df, unmatched_rk_df, matched_sp2d_df, unmatched_sp2d_df
 
+# Fungsi untuk menambahkan hasil vouching ke file RK
+def add_vouching_to_rk(rk_df, matched_rk_df, unmatched_rk_df):
+    # Buat kolom baru untuk keterangan vouching
+    rk_df['Keterangan_Vouching'] = "Unmatched"  # Default: Unmatched
+
+    # Isi kolom Keterangan_Vouching untuk transaksi matched
+    for _, row in matched_rk_df.iterrows():
+        mask = (rk_df['Keterangan'].str.contains(str(row['NO SP2D']), na=False)) & \
+               (rk_df['Jumlah'] == row['Jumlah (Rp)'])
+        rk_df.loc[mask, 'Keterangan_Vouching'] = row['NO SP2D']
+
+    return rk_df
+
+# Fungsi untuk menambahkan hasil vouching ke file SP2D
+def add_vouching_to_sp2d(sp2d_df, matched_sp2d_df, unmatched_sp2d_df, rk_df):
+    # Buat kolom baru untuk keterangan vouching
+    sp2d_df['Keterangan_Vouching'] = "Unmatched"  # Default: Unmatched
+
+    # Isi kolom Keterangan_Vouching untuk transaksi matched
+    for _, row in matched_sp2d_df.iterrows():
+        no_sp2d = str(row['NoSP2D'])[:6]
+        mask = rk_df['Keterangan'].str.contains(no_sp2d, na=False) & \
+               (rk_df['Jumlah'] == row['Jumlah'])
+        if not rk_df[mask].empty:
+            uraian = rk_df.loc[mask, 'Keterangan'].iloc[0]
+            tanggal = rk_df.loc[mask, 'Tanggal'].iloc[0]
+            sp2d_df.loc[sp2d_df['NoSP2D'] == row['NoSP2D'], 'Keterangan_Vouching'] = f"{uraian} - {tanggal}"
+
+    return sp2d_df
+
 # Fungsi untuk menyimpan hasil ke file Excel
-def save_to_excel(matched_rk_df, unmatched_rk_df, matched_sp2d_df, unmatched_sp2d_df):
+def save_to_excel_with_vouching(rk_df, sp2d_df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        matched_rk_df.to_excel(writer, sheet_name='RK_Matched', index=False)
-        unmatched_rk_df.to_excel(writer, sheet_name='RK_Unmatched', index=False)
-        matched_sp2d_df.to_excel(writer, sheet_name='SP2D_Matched', index=False)
-        unmatched_sp2d_df.to_excel(writer, sheet_name='SP2D_Unmatched', index=False)
+        rk_df.to_excel(writer, sheet_name='Rekening Koran', index=False)
+        sp2d_df.to_excel(writer, sheet_name='SP2D', index=False)
     output.seek(0)
     return output
 
@@ -127,8 +155,12 @@ if rk_file and sp2d_file:
             st.write("SP2D Unmatched:")
             st.dataframe(unmatched_sp2d_df)
 
+            # Tambahkan hasil vouching ke file RK dan SP2D
+            rk_df = add_vouching_to_rk(rk_df, matched_rk_df, unmatched_rk_df)
+            sp2d_df = add_vouching_to_sp2d(sp2d_df, matched_sp2d_df, unmatched_sp2d_df, rk_df)
+
             # Simpan hasil ke file Excel
-            excel_data = save_to_excel(matched_rk_df, unmatched_rk_df, matched_sp2d_df, unmatched_sp2d_df)
+            excel_data = save_to_excel_with_vouching(rk_df, sp2d_df)
             st.download_button(
                 label="Unduh Hasil Vouching",
                 data=excel_data,
