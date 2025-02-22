@@ -19,8 +19,8 @@ def perform_vouching(rk_df, sp2d_df):
     # Membuat dictionary untuk SP2D agar pencarian lebih cepat
     sp2d_dict = {}
     for _, row in sp2d_df.iterrows():
-        no_sp2d = row.get('NoSP2D', '')  # Ambil nilai NoSP2D, default '' jika tidak ada
-        if isinstance(no_sp2d, str) and len(no_sp2d) >= 6:  # Pastikan string dan panjang >= 6
+        no_sp2d = str(row.get('NoSP2D', ''))  # Konversi ke string, default '' jika tidak ada
+        if len(no_sp2d) >= 6:  # Pastikan panjang >= 6
             sp2d_dict[no_sp2d[:6]] = row
 
     # Proses vouching untuk setiap baris di RK
@@ -59,7 +59,7 @@ def perform_vouching(rk_df, sp2d_df):
     # Menentukan transaksi SP2D yang tidak cocok
     sp2d_numbers_in_rk = {row['NO SP2D'] for row in matched_rk}
     for _, sp2d_row in sp2d_df.iterrows():
-        no_sp2d = sp2d_row.get('NoSP2D', '')
+        no_sp2d = str(sp2d_row.get('NoSP2D', ''))
         if no_sp2d[:6] not in sp2d_numbers_in_rk:
             unmatched_sp2d.append(sp2d_row)
 
@@ -95,6 +95,11 @@ if rk_file and sp2d_file:
         if not required_columns_sp2d.issubset(sp2d_df.columns):
             st.error(f"File SP2D tidak memiliki kolom yang diperlukan: {required_columns_sp2d}")
             st.stop()
+
+        # Membersihkan data
+        sp2d_df['NoSP2D'] = sp2d_df['NoSP2D'].astype(str).str.strip()  # Konversi ke string dan hapus spasi
+        sp2d_df = sp2d_df[sp2d_df['NoSP2D'].str.len() >= 6]  # Hanya simpan baris dengan NoSP2D >= 6 karakter
+        rk_df['Keterangan'] = rk_df['Keterangan'].astype(str).str.strip()  # Konversi ke string dan hapus spasi
 
         # Tombol untuk memulai vouching
         if st.button("Mulai Vouching"):
