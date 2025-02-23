@@ -27,13 +27,29 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df = rk_df.copy()
     sp2d_df = sp2d_df.copy()
     
+    # Debugging: Tampilkan nama kolom sebelum normalisasi
+    st.write("Nama kolom Rekening Koran (sebelum normalisasi):", rk_df.columns.tolist())
+    st.write("Nama kolom SP2D (sebelum normalisasi):", sp2d_df.columns.tolist())
+    
     # Normalisasi nama kolom
-    rk_df.columns = rk_df.columns.str.strip().str.lower()
-    sp2d_df.columns = sp2d_df.columns.str.strip().str.lower()
+    rk_df.columns = rk_df.columns.str.replace(r'\s+', ' ', regex=True).str.strip().str.lower()
+    sp2d_df.columns = sp2d_df.columns.str.replace(r'\s+', ' ', regex=True).str.strip().str.lower()
     
     # Debugging: Tampilkan nama kolom setelah normalisasi
     st.write("Nama kolom Rekening Koran (setelah normalisasi):", rk_df.columns.tolist())
     st.write("Nama kolom SP2D (setelah normalisasi):", sp2d_df.columns.tolist())
+    
+    # Validasi kolom
+    required_rk = {'tanggal', 'jumlah', 'keterangan'}
+    required_sp2d = {'skpd', 'nosp2d', 'tglsp2d', 'jumlah'}
+    
+    if not required_rk.issubset(rk_df.columns):
+        st.error(f"File Rekening Koran tidak memiliki kolom yang diperlukan: {required_rk - set(rk_df.columns)}")
+        st.stop()
+    
+    if not required_sp2d.issubset(sp2d_df.columns):
+        st.error(f"File SP2D tidak memiliki kolom yang diperlukan: {required_sp2d - set(sp2d_df.columns)}")
+        st.stop()
     
     # Bersihkan kolom jumlah di RK dan SP2D
     rk_df = clean_amount_column(rk_df, 'jumlah')
@@ -122,22 +138,6 @@ if rk_file and sp2d_file:
         # Membaca file
         rk_df = pd.read_excel(rk_file)
         sp2d_df = pd.read_excel(sp2d_file)
-        
-        # Debugging: Tampilkan nama kolom
-        st.write("Nama kolom Rekening Koran:", rk_df.columns.tolist())
-        st.write("Nama kolom SP2D:", sp2d_df.columns.tolist())
-        
-        # Validasi kolom
-        required_rk = {'tanggal', 'keterangan', 'jumlah'}
-        required_sp2d = {'skpd', 'nosp2d', 'tglsp2d', 'jumlah'}
-        
-        if not required_rk.issubset(rk_df.columns.str.lower()):
-            st.error(f"File Rekening Koran tidak memiliki kolom yang diperlukan: {required_rk}")
-            st.stop()
-            
-        if not required_sp2d.issubset(sp2d_df.columns.str.lower()):
-            st.error(f"File SP2D tidak memiliki kolom yang diperlukan: {required_sp2d}")
-            st.stop()
         
         # Debugging: Tampilkan isi DataFrame
         st.write("Data Rekening Koran:")
