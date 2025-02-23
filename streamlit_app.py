@@ -39,26 +39,52 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
     sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
     
-    # Membuat kunci unik
-    rk_df['key'] = rk_df['nosp2d_6digits'] + '_' + rk_df['jumlah'].astype(str)
-    sp2d_df['key'] = sp2d_df['nosp2d_6digits'] + '_' + sp2d_df['jumlah'].astype(str)
-    
-    # Proses matching
+    # Proses matching utama berdasarkan nomor SP2D
     merged = rk_df.merge(
-        sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd']],
-        on='key',
+        sp2d_df[['nosp2d_6digits', 'jumlah', 'tglsp2d', 'skpd', 'nosp2d']],
+        left_on=['nosp2d_6digits', 'jumlah'],
+        right_on=['nosp2d_6digits', 'jumlah'],
         how='left',
         suffixes=('', '_SP2D')
     )
     
-    # Klasifikasi data
-    merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
+    # Tambahkan status awal berdasarkan nomor SP2D
+    merged['status'] = merged['nosp2d'].notna().map({True: 'Matched by SP2D', False: 'Unmatched'})
+    
+    # Pisahkan data unmatched untuk pencocokan alternatif
+    unmatched_mask = merged['status'] == 'Unmatched'
+    unmatched_rk = merged[unmatched_mask].copy()
+    
+    # Proses matching alternatif berdasarkan jumlah dan tanggal
+    unmatched_rk = unmatched_rk.merge(
+        sp2d_df[['jumlah', 'tglsp2d', 'skpd', 'nosp2d']],
+        left_on=['jumlah', 'tanggal'],
+        right_on=['jumlah', 'tglsp2d'],
+        how='left',
+        suffixes=('', '_alt')
+    )
+    
+    # Update status untuk transaksi yang matched berdasarkan jumlah dan tanggal
+    unmatched_rk['status'] = unmatched_rk['nosp2d_alt'].notna().map({True: 'Matched by Amount and Date', False: 'Unmatched'})
+    
+    # Gabungkan hasil matched dari kedua tahap
+    matched_by_amount_date = unmatched_rk[unmatched_rk['status'] == 'Matched by Amount and Date']
+    unmatched_final = unmatched_rk[unmatched_rk['status'] == 'Unmatched']
+    
+    # Gabungkan semua hasil matched
+    matched_final = pd.concat([
+        merged[merged['status'] == 'Matched by SP2D'],
+        matched_by_amount_date
+    ])
     
     # Identifikasi SP2D yang tidak terpakai
-    used_sp2d_keys = set(merged.loc[merged['status'] == 'Matched', 'key'])
-    unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d_keys)]
+    used_sp2d_keys = set(matched_final['nosp2d']).union(set(matched_by_amount_date['nosp2d_alt']))
+    unmatched_sp2d = sp2d_df[~sp2d_df['nosp2d'].isin(used_sp2d_keys)]
     
-    return merged, unmatched_sp2d
+    # Gabungkan semua data RK dengan status
+    all_rk = pd.concat([matched_final, unmatched_final])
+    
+    return all_rk, unmatched_sp2d
 
 # Fungsi untuk membuat file Excel
 def to_excel(df_list, sheet_names):
@@ -106,17 +132,17 @@ if rk_file and sp2d_file:
         
         # Proses vouching
         with st.spinner('Memproses data...'):
-            merged_rk, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
+            all_rk, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
         
         # Tampilkan statistik
         st.subheader("Statistik")
         cols = st.columns(3)
-        cols[0].metric("RK Matched", len(merged_rk[merged_rk['status'] == 'Matched']))
-        cols[1].metric("RK Unmatched", len(merged_rk[merged_rk['status'] == 'Unmatched']))
+        cols[0].metric("RK Matched", len(all_rk[all_rk['status'].str.contains('Matched')]))
+        cols[1].metric("RK Unmatched", len(all_rk[all_rk['status'] == 'Unmatched']))
         cols[2].metric("SP2D Unmatched", len(unmatched_sp2d))
         
         # Buat file Excel untuk di-download
-        df_list = [merged_rk, unmatched_sp2d]
+        df_list = [all_rk, unmatched_sp2d]
         sheet_names = ['Rekening Koran (All)', 'SP2D Unmatched']
         excel_data = to_excel(df_list, sheet_names)
         
