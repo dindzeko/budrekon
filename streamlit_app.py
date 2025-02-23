@@ -10,6 +10,14 @@ def extract_sp2d_number(description):
     match = re.search(r'(?<!\d)\d{6}(?!\d)', str(description))
     return match.group(0) if match else None
 
+# Fungsi untuk membersihkan kolom jumlah
+def clean_amount_column(df, column_name):
+    # Hapus karakter non-numerik (misalnya, koma, titik, atau teks)
+    df[column_name] = df[column_name].astype(str).str.replace(r'[^\d]', '', regex=True)
+    # Konversi ke numerik
+    df[column_name] = pd.to_numeric(df[column_name], errors='coerce')
+    return df
+
 # Fungsi utama untuk proses vouching dengan optimasi
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
@@ -21,15 +29,17 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df.columns = rk_df.columns.str.strip().str.lower()
     sp2d_df.columns = sp2d_df.columns.str.strip().str.lower()
     
+    # Debugging: Tampilkan nama kolom setelah normalisasi
+    st.write("Nama kolom Rekening Koran (setelah normalisasi):", rk_df.columns.tolist())
+    st.write("Nama kolom SP2D (setelah normalisasi):", sp2d_df.columns.tolist())
+    
+    # Bersihkan kolom jumlah di RK dan SP2D
+    rk_df = clean_amount_column(rk_df, 'jumlah')
+    sp2d_df = clean_amount_column(sp2d_df, 'jumlah')
+    
     # Ekstraksi nomor SP2D
     rk_df['nosp2d_6digits'] = rk_df['keterangan'].apply(extract_sp2d_number)
     sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[:6]
-    
-    # Konversi tipe data
-    numeric_cols = ['jumlah']
-    for col in numeric_cols:
-        rk_df[col] = pd.to_numeric(rk_df[col], errors='coerce')
-        sp2d_df[col] = pd.to_numeric(sp2d_df[col], errors='coerce')
     
     # Handle missing values
     rk_df['nosp2d_6digits'] = rk_df['nosp2d_6digits'].fillna('')
