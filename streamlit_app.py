@@ -86,11 +86,12 @@ def perform_vouching(rk_df, sp2d_df):
         )
         
         if not second_merge.empty:
-            # Update data hasil merge kedua
-            merged.loc[second_merge.index, 'nosp2d'] = second_merge['nosp2d_y']
-            merged.loc[second_merge.index, 'tglsp2d'] = second_merge['tglsp2d_y']
-            merged.loc[second_merge.index, 'skpd'] = second_merge['skpd_y']
-            merged.loc[second_merge.index, 'status'] = 'Matched (Secondary)'
+            # Update data hasil merge kedua berdasarkan key, bukan indeks
+            for _, row in second_merge.iterrows():
+                merged.loc[merged['key'] == row['key'], 'nosp2d'] = row['nosp2d_y']
+                merged.loc[merged['key'] == row['key'], 'tglsp2d'] = row['tglsp2d_y']
+                merged.loc[merged['key'] == row['key'], 'skpd'] = row['skpd_y']
+                merged.loc[merged['key'] == row['key'], 'status'] = 'Matched (Secondary)'
             
             # Update daftar SP2D yang digunakan
             used_sp2d.update(second_merge['key_y'])
