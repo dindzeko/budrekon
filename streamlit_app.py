@@ -3,18 +3,15 @@ import pandas as pd
 import re
 from io import BytesIO
 from datetime import datetime
-
 def preprocess_jumlah(series):
     """Fungsi untuk membersihkan format angka dengan separator"""
     series = series.astype(str)
     series = series.str.replace(r'[.]', '', regex=True)  # Hapus separator ribuan
     series = series.str.replace(',', '.', regex=False)    # Ganti desimal koma dengan titik
     return pd.to_numeric(series, errors='coerce')
-
 def extract_sp2d_number(description):
     match = re.search(r'(?<!\d)\d{6}(?!\d)', str(description))
     return match.group(0) if match else None
-
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
     # Preprocessing data
@@ -59,51 +56,35 @@ def perform_vouching(rk_df, sp2d_df):
     
     # Vouching kedua (jumlah + tanggal)
     if not unmatched_rk.empty and not unmatched_sp2d.empty:
-        # Lakukan merge dengan left join untuk menghindari duplikasi
         second_merge = unmatched_rk.merge(
             unmatched_sp2d,
             left_on=['jumlah', 'tanggal'],
             right_on=['jumlah', 'tglsp2d'],
-            how='left',
-            suffixes=('', '_y')  # Pastikan tanda kurung ditutup di sini
+            how='inner',
+            suffixes=('', '_y')
         )
         
-        # Hapus duplikat di sisi RK (ambil yang pertama)
-        second_merge = second_merge.drop_duplicates(
-            subset=['tanggal', 'jumlah', 'keterangan'], 
-            keep='first'
-        )
-        
-        # Filter hanya yang berhasil match
-        second_merge_matched = second_merge[second_merge['nosp2d_y'].notna()]
-        
-        if not second_merge_matched.empty:
+        if not second_merge.empty:
             # Update data hasil merge kedua
-            matched_indices = second_merge_matched.index
-            merged.loc[matched_indices, 'nosp2d'] = second_merge_matched['nosp2d_y']
-            merged.loc[matched_indices, 'tglsp2d'] = second_merge_matched['tglsp2d_y']
-            merged.loc[matched_indices, 'skpd'] = second_merge_matched['skpd_y']
-            merged.loc[matched_indices, 'status'] = 'Matched (Secondary)'
+            merged.loc[second_merge.index, 'nosp2d'] = second_merge['nosp2d_y']
+            merged.loc[second_merge.index, 'tglsp2d'] = second_merge['tglsp2d_y']
+            merged.loc[second_merge.index, 'skpd'] = second_merge['skpd_y']
+            merged.loc[second_merge.index, 'status'] = 'Matched (Secondary)'
             
             # Update daftar SP2D yang digunakan
-            used_sp2d.update(second_merge_matched['key_y'])
+            used_sp2d.update(second_merge['key_y'])
             unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
     
     return merged, unmatched_sp2d
-
 def to_excel(df_list, sheet_names):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         for df, sheet_name in zip(df_list, sheet_names):
             df.to_excel(writer, index=False, sheet_name=sheet_name)
     return output.getvalue()
-
-# Streamlit App
 st.title("Aplikasi Vouching SP2D vs Rekening Koran (Enhanced)")
-
 rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
 sp2d_file = st.file_uploader("Upload SP2D", type="xlsx")
-
 if rk_file and sp2d_file:
     try:
         rk_df = pd.read_excel(rk_file)
