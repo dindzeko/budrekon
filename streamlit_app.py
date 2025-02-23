@@ -11,6 +11,7 @@ def preprocess_jumlah(series):
     return pd.to_numeric(series, errors='coerce')
 
 def extract_sp2d_number(description):
+    # Pola regex untuk mengekstrak nomor SP2D dari keterangan
     match = re.search(r'SP2D NO (\d{6})', str(description))
     return match.group(1) if match else None
 
@@ -43,13 +44,13 @@ def perform_vouching(rk_df, sp2d_df):
     sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], format='%d/%m/%Y', errors='coerce')
     
     # Membuat kunci
-    rk_df['key'] = rk_df['nosp2d_6digits'] + '_' + rk_df['jumlah'].astype(str)
-    sp2d_df['key'] = sp2d_df['nosp2d_6digits'] + '_' + sp2d_df['jumlah'].astype(str)
+    rk_df['key'] = rk_df['nosp2d_6digits'].fillna('') + '_' + rk_df['jumlah'].astype(str)
+    sp2d_df['key'] = sp2d_df['nosp2d_6digits'].fillna('') + '_' + sp2d_df['jumlah'].astype(str)
     
     # Vouching pertama (kunci SP2D + jumlah + skpd)
     merged = rk_df.merge(
         sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd']],
-        on=['nosp2d_6digits', 'jumlah', 'skpd'],
+        on='key',
         how='left',
         suffixes=('', '_SP2D')
     )
