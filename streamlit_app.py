@@ -55,6 +55,12 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df['key'] = rk_df['nosp2d_6digits'] + '_' + rk_df['jumlah'].astype(str)
     sp2d_df['key'] = sp2d_df['nosp2d_6digits'] + '_' + sp2d_df['jumlah'].astype(str)
     
+    # Debugging preprocessing
+    print("RK DataFrame after preprocessing:")
+    print(rk_df[['tanggal', 'keterangan', 'jumlah', 'nosp2d_6digits', 'key']].head())
+    print("SP2D DataFrame after preprocessing:")
+    print(sp2d_df[['tglsp2d', 'nosp2d', 'jumlah', 'nosp2d_6digits', 'key']].head())
+    
     # Vouching pertama (kunci SP2D + jumlah)
     merged = rk_df.merge(
         sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd']],
@@ -64,10 +70,18 @@ def perform_vouching(rk_df, sp2d_df):
     )
     merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
     
+    # Debugging merge primary
+    print("Merged DataFrame primary:")
+    print(merged[['tanggal', 'jumlah', 'nosp2d_6digits', 'key', 'nosp2d', 'status']].head())
+    
     # Identifikasi data belum terhubung
     used_sp2d = set(merged.loc[merged['status'] == 'Matched', 'key'])
     unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
     unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
+    
+    # Debugging data yang tidak cocok
+    print("Unmatched RK DataFrame:")
+    print(unmatched_rk[['tanggal', 'jumlah', 'nosp2d_6digits', 'key']].head())
     
     # Vouching kedua (jumlah + tanggal + skpd)
     if not unmatched_rk.empty and not unmatched_sp2d.empty:
@@ -89,6 +103,12 @@ def perform_vouching(rk_df, sp2d_df):
             # Update daftar SP2D yang digunakan
             used_sp2d.update(second_merge['key_y'])
             unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
+        
+        # Debugging merge secondary
+        print("Second Merge DataFrame:")
+        print(second_merge[['tanggal', 'jumlah', 'nosp2d_6digits', 'key', 'nosp2d_y', 'status']].head())
+    else:
+        print("Tidak ada data yang tersisa untuk merge kedua.")
     
     # Layer tambahan untuk kasus khusus
     if not unmatched_rk.empty and not unmatched_sp2d.empty:
@@ -110,6 +130,12 @@ def perform_vouching(rk_df, sp2d_df):
             # Update daftar SP2D yang digunakan
             used_sp2d.update(third_merge['key_y'])
             unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
+        
+        # Debugging merge third layer
+        print("Third Merge DataFrame:")
+        print(third_merge[['tanggal', 'jumlah', 'nosp2d_6digits', 'key', 'nosp2d_y', 'status']].head())
+    else:
+        print("Tidak ada data yang tersisa untuk merge ketiga.")
     
     return merged, unmatched_sp2d
 
