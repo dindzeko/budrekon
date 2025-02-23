@@ -3,15 +3,30 @@ import pandas as pd
 import re
 from io import BytesIO
 from datetime import datetime
+
+# Fungsi untuk membersihkan format angka dengan separator
 def preprocess_jumlah(series):
     """Fungsi untuk membersihkan format angka dengan separator"""
     series = series.astype(str)
     series = series.str.replace(r'[.]', '', regex=True)  # Hapus separator ribuan
-    series = series.str.replace(',', '.', regex=False)    # Ganti desimal koma dengan titik
+    series = series.str.replace(',', '.', regex=False)   # Ganti desimal koma dengan titik
     return pd.to_numeric(series, errors='coerce')
+
+# Fungsi ekstraksi SP2D diperbaiki
 def extract_sp2d_number(description):
-    match = re.search(r'(?<!\d)\d{6}(?!\d)', str(description))
-    return match.group(0) if match else None
+    """
+    Fungsi untuk mengekstrak 6 digit terakhir nomor SP2D dari teks uraian.
+    Jika tidak ditemukan pola angka, kembalikan None.
+    """
+    # Cari semua angka dalam keterangan
+    numbers = re.findall(r'\d+', str(description))
+    if numbers:
+        last_number = numbers[-1]  # Ambil angka terakhir
+        trimmed = last_number[-6:] if len(last_number) >= 6 else last_number
+        padded = trimmed.zfill(6)  # Tambahkan 0 di depan jika kurang dari 6 digit
+        return padded
+    return None
+
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
     # Preprocessing data
@@ -30,7 +45,7 @@ def perform_vouching(rk_df, sp2d_df):
     
     # Ekstraksi SP2D
     rk_df['nosp2d_6digits'] = rk_df['keterangan'].apply(extract_sp2d_number)
-    sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[:6]
+    sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[-6:].str.zfill(6)  # Ambil 6 digit terakhir
     
     # Konversi tanggal
     rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
@@ -54,37 +69,40 @@ def perform_vouching(rk_df, sp2d_df):
     unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
     unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
     
-    # Vouching kedua (jumlah + tanggal)
-    if not unmatched_rk.empty and not unmatched_sp2d.empty:
-        second_merge = unmatched_rk.merge(
-            unmatched_sp2d,
-            left_on=['jumlah', 'tanggal'],
-            right_on=['jumlah', 'tglsp2d'],
-            how='inner',
-            suffixes=('', '_y')
-        )
+    # Perbaikan pencocokan kedua
+    unmatched_rk['original_index'] = unmatched_rk.index  # Simpan index asli
+    second_merge = unmatched_rk.merge(
+        unmatched_sp2d,
+        on=['jumlah', 'tanggal'],  # Pastikan kolom tanggal sesuai
+        suffixes=('', '_sp2d')
+    )
+    
+    if not second_merge.empty:
+        # Update data berdasarkan index asli di dataframe utama
+        merged.loc[second_merge['original_index'], ['nosp2d', 'skpd', 'status']] = \
+            second_merge[['nosp2d_sp2d', 'skpd_sp2d', 'Matched (Secondary)']]
         
-        if not second_merge.empty:
-            # Update data hasil merge kedua
-            merged.loc[second_merge.index, 'nosp2d'] = second_merge['nosp2d_y']
-            merged.loc[second_merge.index, 'tglsp2d'] = second_merge['tglsp2d_y']
-            merged.loc[second_merge.index, 'skpd'] = second_merge['skpd_y']
-            merged.loc[second_merge.index, 'status'] = 'Matched (Secondary)'
-            
-            # Update daftar SP2D yang digunakan
-            used_sp2d.update(second_merge['key_y'])
-            unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
+        # Update daftar SP2D yang digunakan
+        used_sp2d.update(second_merge['key_sp2d'])
+        unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
     
     return merged, unmatched_sp2d
+
+# Fungsi untuk menyimpan hasil ke file Excel
 def to_excel(df_list, sheet_names):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         for df, sheet_name in zip(df_list, sheet_names):
             df.to_excel(writer, index=False, sheet_name=sheet_name)
     return output.getvalue()
+
+# Antarmuka Streamlit
 st.title("Aplikasi Vouching SP2D vs Rekening Koran (Enhanced)")
+
+# Upload file
 rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
 sp2d_file = st.file_uploader("Upload SP2D", type="xlsx")
+
 if rk_file and sp2d_file:
     try:
         rk_df = pd.read_excel(rk_file)
