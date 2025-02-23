@@ -37,6 +37,10 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df.columns = rk_df.columns.str.strip().str.lower()
     sp2d_df.columns = sp2d_df.columns.str.strip().str.lower()
     
+    # Debugging: Tampilkan nama kolom setelah normalisasi
+    st.write("Nama kolom RK setelah normalisasi:", rk_df.columns.tolist())
+    st.write("Nama kolom SP2D setelah normalisasi:", sp2d_df.columns.tolist())
+    
     # Preprocessing jumlah
     numeric_cols = ['jumlah']
     for col in numeric_cols:
@@ -48,8 +52,12 @@ def perform_vouching(rk_df, sp2d_df):
     sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[-6:].str.zfill(6)  # Ambil 6 digit terakhir
     
     # Konversi tanggal
-    rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
-    sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
+    try:
+        rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
+        sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
+    except KeyError as e:
+        st.error(f"Kolom '{e.args[0]}' tidak ditemukan. Pastikan file Excel memiliki kolom 'tanggal' atau 'tglsp2d'.")
+        st.stop()
     
     # Membuat kunci
     rk_df['key'] = rk_df['nosp2d_6digits'] + '_' + rk_df['jumlah'].astype(str)
