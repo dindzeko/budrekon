@@ -4,20 +4,17 @@ import re
 from io import BytesIO
 from datetime import datetime
 
-# Fungsi untuk membersihkan format angka dengan separator
 def preprocess_jumlah(series):
     """Fungsi untuk membersihkan format angka dengan separator"""
     series = series.astype(str)
     series = series.str.replace(r'[.]', '', regex=True)  # Hapus separator ribuan
-    series = series.str.replace(',', '.', regex=False)   # Ganti desimal koma dengan titik
+    series = series.str.replace(',', '.', regex=False)    # Ganti desimal koma dengan titik
     return pd.to_numeric(series, errors='coerce')
 
-# Fungsi untuk mengekstrak nomor SP2D (6 digit pertama)
 def extract_sp2d_number(description):
     match = re.search(r'(?<!\d)\d{6}(?!\d)', str(description))
     return match.group(0) if match else None
 
-# Fungsi utama untuk melakukan vouching
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
     # Preprocessing data
@@ -60,12 +57,12 @@ def perform_vouching(rk_df, sp2d_df):
     unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
     unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
     
-    # Vouching kedua (jumlah + tanggal + SKPD)
+    # Vouching kedua (jumlah + tanggal)
     if not unmatched_rk.empty and not unmatched_sp2d.empty:
         second_merge = unmatched_rk.merge(
             unmatched_sp2d,
-            left_on=['jumlah', 'tanggal', 'skpd'],
-            right_on=['jumlah', 'tglsp2d', 'skpd'],
+            left_on=['jumlah', 'tanggal'],
+            right_on=['jumlah', 'tglsp2d'],
             how='inner',
             suffixes=('', '_y')
         )
@@ -83,7 +80,6 @@ def perform_vouching(rk_df, sp2d_df):
     
     return merged, unmatched_sp2d
 
-# Fungsi untuk menyimpan DataFrame ke file Excel
 def to_excel(df_list, sheet_names):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -91,21 +87,18 @@ def to_excel(df_list, sheet_names):
             df.to_excel(writer, index=False, sheet_name=sheet_name)
     return output.getvalue()
 
-# Streamlit App
 st.title("Aplikasi Vouching SP2D vs Rekening Koran (Enhanced)")
 
-# Upload file
 rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
 sp2d_file = st.file_uploader("Upload SP2D", type="xlsx")
 
 if rk_file and sp2d_file:
     try:
-        # Baca file Excel
         rk_df = pd.read_excel(rk_file)
         sp2d_df = pd.read_excel(sp2d_file)
         
         # Validasi kolom
-        required_rk = {'tanggal', 'keterangan', 'jumlah', 'skpd'}
+        required_rk = {'tanggal', 'keterangan', 'jumlah'}
         required_sp2d = {'skpd', 'nosp2d', 'tglsp2d', 'jumlah'}
         
         if not required_rk.issubset(rk_df.columns.str.lower()):
