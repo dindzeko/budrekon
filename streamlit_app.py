@@ -4,56 +4,51 @@ import re
 from io import BytesIO
 from datetime import datetime
 
+# Fungsi untuk normalisasi nama kolom
+def normalize_column_name(name):
+    # Hapus karakter khusus dan spasi, lalu ubah ke lowercase
+    return re.sub(r'[^a-zA-Z0-9]', '', name).lower()
+
 # Fungsi untuk ekstraksi SP2D dengan regex yang lebih robust
 def extract_sp2d_number(description):
-    # Mencari 6 digit angka yang mungkin merupakan SP2D
     match = re.search(r'(?<!\d)\d{6}(?!\d)', str(description))
     return match.group(0) if match else None
 
 # Fungsi untuk membersihkan kolom jumlah
 def clean_amount_column(df, column_name):
-    # Hapus semua karakter non-numerik kecuali titik desimal
-    df[column_name] = df[column_name].astype(str).str.replace(r'[^\d.]', '', regex=True)
-    # Ganti titik desimal dengan string kosong jika ada lebih dari satu titik
-    df[column_name] = df[column_name].apply(lambda x: x.replace('.', '') if x.count('.') > 1 else x)
-    # Konversi ke numerik
+    if column_name not in df.columns:
+        raise KeyError(f"Kolom '{column_name}' tidak ditemukan dalam DataFrame")
+    df[column_name] = df[column_name].astype(str).str.replace(r'[^\d]', '', regex=True)
     df[column_name] = pd.to_numeric(df[column_name], errors='coerce')
     return df
 
 # Fungsi utama untuk proses vouching dengan optimasi
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
-    # Preprocessing data
     rk_df = rk_df.copy()
     sp2d_df = sp2d_df.copy()
     
-    # Debugging: Tampilkan nama kolom sebelum normalisasi
-    st.write("Nama kolom Rekening Koran (sebelum normalisasi):", rk_df.columns.tolist())
-    st.write("Nama kolom SP2D (sebelum normalisasi):", sp2d_df.columns.tolist())
+    # Normalisasi nama kolom dengan fungsi yang lebih kuat
+    rk_df.columns = [normalize_column_name(col) for col in rk_df.columns]
+    sp2d_df.columns = [normalize_column_name(col) for col in sp2d_df.columns]
     
-    # Normalisasi nama kolom
-    rk_df.columns = rk_df.columns.str.replace(r'\s+', ' ', regex=True).str.strip().str.lower()
-    sp2d_df.columns = sp2d_df.columns.str.replace(r'\s+', ' ', regex=True).str.strip().str.lower()
-    
-    # Debugging: Tampilkan nama kolom setelah normalisasi
-    st.write("Nama kolom Rekening Koran (setelah normalisasi):", rk_df.columns.tolist())
-    st.write("Nama kolom SP2D (setelah normalisasi):", sp2d_df.columns.tolist())
-    
-    # Validasi kolom
-    required_rk = {'tanggal', 'jumlah', 'keterangan'}
+    # Validasi kolom setelah normalisasi
+    required_rk = {'tanggal', 'keterangan', 'jumlah'}
     required_sp2d = {'skpd', 'nosp2d', 'tglsp2d', 'jumlah'}
     
     if not required_rk.issubset(rk_df.columns):
-        st.error(f"File Rekening Koran tidak memiliki kolom yang diperlukan: {required_rk - set(rk_df.columns)}")
-        st.stop()
-    
+        missing = required_rk - set(rk_df.columns)
+        raise KeyError(f"Kolom Rekening Koran tidak lengkap: {missing}")
     if not required_sp2d.issubset(sp2d_df.columns):
-        st.error(f"File SP2D tidak memiliki kolom yang diperlukan: {required_sp2d - set(sp2d_df.columns)}")
-        st.stop()
+        missing = required_sp2d - set(sp2d_df.columns)
+        raise KeyError(f"Kolom SP2D tidak lengkap: {missing}")
     
-    # Bersihkan kolom jumlah di RK dan SP2D
-    rk_df = clean_amount_column(rk_df, 'jumlah')
-    sp2d_df = clean_amount_column(sp2d_df, 'jumlah')
+    try:
+        rk_df = clean_amount_column(rk_df, 'jumlah')
+        sp2d_df = clean_amount_column(sp2d_df, 'jumlah')
+    except KeyError as e:
+        st.error(f"Kesalahan pada kolom 'jumlah': {str(e)}")
+        st.stop()
     
     # Ekstraksi nomor SP2D
     rk_df['nosp2d_6digits'] = rk_df['keterangan'].apply(extract_sp2d_number)
@@ -139,21 +134,9 @@ if rk_file and sp2d_file:
         rk_df = pd.read_excel(rk_file)
         sp2d_df = pd.read_excel(sp2d_file)
         
-        # Debugging: Tampilkan isi DataFrame
-        st.write("Data Rekening Koran:")
-        st.dataframe(rk_df)
-        st.write("Data SP2D:")
-        st.dataframe(sp2d_df)
-        
-        # Debugging: Periksa duplikasi di input
-        st.write("Duplikasi di Rekening Koran:")
-        st.write(rk_df[rk_df.duplicated(subset=['tanggal', 'keterangan', 'jumlah'], keep=False)])
-        st.write("Duplikasi di SP2D:")
-        st.write(sp2d_df[sp2d_df.duplicated(subset=['nosp2d', 'tglsp2d', 'jumlah'], keep=False)])
-        
-        # Debugging: Hitung total nilai RK awal
-        total_rk_awal = rk_df['jumlah'].sum()
-        st.write(f"Total Nilai RK Awal: {total_rk_awal:,.2f}")
+        # Debugging: Tampilkan nama kolom sebelum normalisasi
+        st.write("Nama kolom Rekening Koran (sebelum normalisasi):", rk_df.columns.tolist())
+        st.write("Nama kolom SP2D (sebelum normalisasi):", sp2d_df.columns.tolist())
         
         # Proses vouching
         with st.spinner('Memproses data...'):
@@ -171,7 +154,9 @@ if rk_file and sp2d_file:
         cols[2].metric("SP2D Unmatched", len(unmatched_sp2d))
         
         # Cek total nilai RK awal dan hasil vouching
+        total_rk_awal = rk_df['jumlah'].sum()
         total_rk_hasil = all_rk['jumlah'].sum()
+        
         st.subheader("Validasi Total Nilai RK")
         st.write(f"Total Nilai RK Awal: {total_rk_awal:,.2f}")
         st.write(f"Total Nilai RK Hasil Vouching: {total_rk_hasil:,.2f}")
