@@ -4,32 +4,68 @@ import re
 from io import BytesIO
 from datetime import datetime
 
+# Fungsi untuk normalisasi nama kolom
+def normalize_column_name(name):
+    # Hapus spasi ganda, karakter khusus, dan ubah ke lowercase
+    name = re.sub(r'\s+', ' ', name)  # Hapus spasi ganda
+    name = re.sub(r'[^\w\s]', '', name)  # Hapus karakter khusus (selain huruf, angka, dan spasi)
+    return name.strip().lower()  # Ubah ke lowercase dan hapus spasi di awal/akhir
+
 # Fungsi untuk ekstraksi SP2D dengan regex yang lebih robust
 def extract_sp2d_number(description):
-    # Mencari 6 digit angka yang mungkin merupakan SP2D
     match = re.search(r'(?<!\d)\d{6}(?!\d)', str(description))
     return match.group(0) if match else None
+
+# Fungsi untuk membersihkan kolom jumlah
+def clean_amount_column(df, column_name):
+    if column_name not in df.columns:
+        raise KeyError(f"Kolom '{column_name}' tidak ditemukan dalam DataFrame")
+    df[column_name] = df[column_name].astype(str).str.replace(r'[^\d]', '', regex=True)
+    df[column_name] = pd.to_numeric(df[column_name], errors='coerce')
+    return df
 
 # Fungsi utama untuk proses vouching dengan optimasi
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
-    # Preprocessing data
     rk_df = rk_df.copy()
     sp2d_df = sp2d_df.copy()
     
+    # Debugging: Tampilkan nama kolom sebelum normalisasi
+    st.write("Nama kolom Rekening Koran (sebelum normalisasi):", rk_df.columns.tolist())
+    st.write("Nama kolom SP2D (sebelum normalisasi):", sp2d_df.columns.tolist())
+    
     # Normalisasi nama kolom
-    rk_df.columns = rk_df.columns.str.strip().str.lower()
-    sp2d_df.columns = sp2d_df.columns.str.strip().str.lower()
+    rk_df.columns = [normalize_column_name(col) for col in rk_df.columns]
+    sp2d_df.columns = [normalize_column_name(col) for col in sp2d_df.columns]
+    
+    # Debugging: Tampilkan nama kolom setelah normalisasi
+    st.write("Nama kolom Rekening Koran (setelah normalisasi):", rk_df.columns.tolist())
+    st.write("Nama kolom SP2D (setelah normalisasi):", sp2d_df.columns.tolist())
+    
+    # Validasi kolom setelah normalisasi
+    required_rk = {'tanggal', 'keterangan', 'jumlah'}
+    required_sp2d = {'skpd', 'nosp2d', 'tglsp2d', 'jumlah'}
+    
+    if not required_rk.issubset(rk_df.columns):
+        missing_columns = required_rk - set(rk_df.columns)
+        st.error(f"File Rekening Koran tidak memiliki kolom yang diperlukan: {missing_columns}")
+        st.stop()
+    
+    if not required_sp2d.issubset(sp2d_df.columns):
+        missing_columns = required_sp2d - set(sp2d_df.columns)
+        st.error(f"File SP2D tidak memiliki kolom yang diperlukan: {missing_columns}")
+        st.stop()
+    
+    try:
+        rk_df = clean_amount_column(rk_df, 'jumlah')
+        sp2d_df = clean_amount_column(sp2d_df, 'jumlah')
+    except KeyError as e:
+        st.error(f"Kesalahan pada kolom 'jumlah': {str(e)}")
+        st.stop()
     
     # Ekstraksi nomor SP2D
     rk_df['nosp2d_6digits'] = rk_df['keterangan'].apply(extract_sp2d_number)
     sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[:6]
-    
-    # Konversi tipe data
-    numeric_cols = ['jumlah']
-    for col in numeric_cols:
-        rk_df[col] = pd.to_numeric(rk_df[col], errors='coerce')
-        sp2d_df[col] = pd.to_numeric(sp2d_df[col], errors='coerce')
     
     # Handle missing values
     rk_df['nosp2d_6digits'] = rk_df['nosp2d_6digits'].fillna('')
@@ -39,26 +75,55 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
     sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
     
-    # Membuat kunci unik
-    rk_df['key'] = rk_df['nosp2d_6digits'] + '_' + rk_df['jumlah'].astype(str)
-    sp2d_df['key'] = sp2d_df['nosp2d_6digits'] + '_' + sp2d_df['jumlah'].astype(str)
-    
-    # Proses matching
+    # Proses matching utama berdasarkan nomor SP2D
     merged = rk_df.merge(
-        sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd']],
-        on='key',
+        sp2d_df[['nosp2d_6digits', 'jumlah', 'tglsp2d', 'skpd', 'nosp2d']].drop_duplicates(),
+        left_on=['nosp2d_6digits', 'jumlah'],
+        right_on=['nosp2d_6digits', 'jumlah'],
         how='left',
         suffixes=('', '_SP2D')
     )
     
-    # Klasifikasi data
-    merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
+    # Tambahkan status awal berdasarkan nomor SP2D
+    merged['status'] = merged['nosp2d'].notna().map({True: 'Matched by SP2D', False: 'Unmatched'})
+    
+    # Pisahkan data unmatched untuk pencocokan alternatif
+    unmatched_mask = merged['status'] == 'Unmatched'
+    unmatched_rk = merged[unmatched_mask].copy()
+    
+    # Proses matching alternatif berdasarkan jumlah dan tanggal
+    unmatched_rk = unmatched_rk.merge(
+        sp2d_df[['jumlah', 'tglsp2d', 'skpd', 'nosp2d']].drop_duplicates(),
+        left_on=['jumlah', 'tanggal'],
+        right_on=['jumlah', 'tglsp2d'],
+        how='left',
+        suffixes=('', '_alt')
+    )
+    
+    # Update status untuk transaksi yang matched berdasarkan jumlah dan tanggal
+    unmatched_rk['status'] = unmatched_rk['nosp2d_alt'].notna().map({True: 'Matched by Amount and Date', False: 'Unmatched'})
+    
+    # Gabungkan hasil matched dari kedua tahap
+    matched_by_amount_date = unmatched_rk[unmatched_rk['status'] == 'Matched by Amount and Date']
+    unmatched_final = unmatched_rk[unmatched_rk['status'] == 'Unmatched']
+    
+    # Gabungkan semua hasil matched
+    matched_final = pd.concat([
+        merged[merged['status'] == 'Matched by SP2D'],
+        matched_by_amount_date
+    ])
     
     # Identifikasi SP2D yang tidak terpakai
-    used_sp2d_keys = set(merged.loc[merged['status'] == 'Matched', 'key'])
-    unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d_keys)]
+    used_sp2d_keys = set(matched_final['nosp2d']).union(set(matched_by_amount_date['nosp2d_alt']))
+    unmatched_sp2d = sp2d_df[~sp2d_df['nosp2d'].isin(used_sp2d_keys)]
     
-    return merged, unmatched_sp2d
+    # Gabungkan semua data RK dengan status
+    all_rk = pd.concat([matched_final, unmatched_final])
+    
+    # Pastikan tidak ada duplikasi baris RK
+    all_rk = all_rk.drop_duplicates(subset=all_rk.columns.difference(['status']), keep='first')
+    
+    return all_rk, unmatched_sp2d
 
 # Fungsi untuk membuat file Excel
 def to_excel(df_list, sheet_names):
@@ -82,22 +147,6 @@ if rk_file and sp2d_file:
         rk_df = pd.read_excel(rk_file)
         sp2d_df = pd.read_excel(sp2d_file)
         
-        # Debugging: Tampilkan nama kolom
-        st.write("Nama kolom Rekening Koran:", rk_df.columns.tolist())
-        st.write("Nama kolom SP2D:", sp2d_df.columns.tolist())
-        
-        # Validasi kolom
-        required_rk = {'tanggal', 'keterangan', 'jumlah'}
-        required_sp2d = {'skpd', 'nosp2d', 'tglsp2d', 'jumlah'}
-        
-        if not required_rk.issubset(rk_df.columns.str.lower()):
-            st.error(f"File Rekening Koran tidak memiliki kolom yang diperlukan: {required_rk}")
-            st.stop()
-            
-        if not required_sp2d.issubset(sp2d_df.columns.str.lower()):
-            st.error(f"File SP2D tidak memiliki kolom yang diperlukan: {required_sp2d}")
-            st.stop()
-        
         # Debugging: Tampilkan isi DataFrame
         st.write("Data Rekening Koran:")
         st.dataframe(rk_df)
@@ -106,17 +155,32 @@ if rk_file and sp2d_file:
         
         # Proses vouching
         with st.spinner('Memproses data...'):
-            merged_rk, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
+            all_rk, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
+        
+        # Debugging: Tampilkan hasil vouching
+        st.write("Hasil Vouching (RK):")
+        st.dataframe(all_rk.head())
         
         # Tampilkan statistik
         st.subheader("Statistik")
         cols = st.columns(3)
-        cols[0].metric("RK Matched", len(merged_rk[merged_rk['status'] == 'Matched']))
-        cols[1].metric("RK Unmatched", len(merged_rk[merged_rk['status'] == 'Unmatched']))
+        cols[0].metric("RK Matched", len(all_rk[all_rk['status'].str.contains('Matched')]))
+        cols[1].metric("RK Unmatched", len(all_rk[all_rk['status'] == 'Unmatched']))
         cols[2].metric("SP2D Unmatched", len(unmatched_sp2d))
         
+        # Cek total nilai RK awal dan hasil vouching
+        total_rk_awal = rk_df['jumlah'].sum()
+        total_rk_hasil = all_rk['jumlah'].sum()
+        
+        st.subheader("Validasi Total Nilai RK")
+        st.write(f"Total Nilai RK Awal: {total_rk_awal:,.2f}")
+        st.write(f"Total Nilai RK Hasil Vouching: {total_rk_hasil:,.2f}")
+        
+        if total_rk_awal != total_rk_hasil:
+            st.warning("Perhatian: Total nilai RK awal dan hasil vouching tidak sesuai!")
+        
         # Buat file Excel untuk di-download
-        df_list = [merged_rk, unmatched_sp2d]
+        df_list = [all_rk, unmatched_sp2d]
         sheet_names = ['Rekening Koran (All)', 'SP2D Unmatched']
         excel_data = to_excel(df_list, sheet_names)
         
