@@ -36,8 +36,8 @@ def perform_vouching(rk_df, sp2d_df):
     sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[:6]
     
     # Konversi tanggal
-    rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
-    sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
+    rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], format='%Y-%m-%d', errors='coerce')
+    sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], format='%d/%m/%Y', errors='coerce')
     
     # Membuat kunci
     rk_df['key'] = rk_df['nosp2d_6digits'] + '_' + rk_df['jumlah'].astype(str)
@@ -57,12 +57,12 @@ def perform_vouching(rk_df, sp2d_df):
     unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
     unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
     
-    # Vouching kedua (jumlah + tanggal)
+    # Vouching kedua (jumlah + tanggal + skpd)
     if not unmatched_rk.empty and not unmatched_sp2d.empty:
         second_merge = unmatched_rk.merge(
             unmatched_sp2d,
-            left_on=['jumlah', 'tanggal'],
-            right_on=['jumlah', 'tglsp2d'],
+            left_on=['jumlah', 'tanggal', 'skpd'],
+            right_on=['jumlah', 'tglsp2d', 'skpd'],
             how='inner',
             suffixes=('', '_y')
         )
@@ -88,10 +88,8 @@ def to_excel(df_list, sheet_names):
     return output.getvalue()
 
 st.title("Aplikasi Vouching SP2D vs Rekening Koran (Enhanced)")
-
 rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
 sp2d_file = st.file_uploader("Upload SP2D", type="xlsx")
-
 if rk_file and sp2d_file:
     try:
         rk_df = pd.read_excel(rk_file)
@@ -135,4 +133,83 @@ if rk_file and sp2d_file:
         
     except Exception as e:
         st.error(f"Error: {str(e)}")
-        st.stop()
+        st.stop
+
+# Debugging preprocessing
+print("RK DataFrame after preprocessing:")
+print(rk_df[['tanggal', 'keterangan', 'jumlah']].head())
+print("SP2D DataFrame after preprocessing:")
+print(sp2d_df[['tglsp2d', 'nosp2d', 'jumlah']].head())
+
+# Debugging ekstraksi nomor SP2D
+print("RK DataFrame with extracted nosp2d_6digits:")
+print(rk_df[['keterangan', 'nosp2d_6digits']].head())
+print("SP2D DataFrame with nosp2d_6digits:")
+print(sp2d_df[['nosp2d', 'nosp2d_6digits']].head())
+
+# Debugging pembuatan kunci
+print("RK DataFrame with key:")
+print(rk_df[['nosp2d_6digits', 'jumlah', 'key']].head())
+print("SP2D DataFrame with key:")
+print(sp2d_df[['nosp2d_6digits', 'jumlah', 'key']].head())
+
+# Debugging merge primary
+print("Merged DataFrame primary:")
+print(merged[['tanggal', 'jumlah', 'nosp2d_6digits', 'key', 'nosp2d', 'status']].head())
+
+# Debugging data yang tidak cocok
+unmatched_rk_debug = merged[merged['status'] == 'Unmatched']
+print("Unmatched RK DataFrame:")
+print(unmatched_rk_debug[['tanggal', 'jumlah', 'nosp2d_6digits', 'key']].head())
+
+# Debugging merge secondary
+if not unmatched_rk.empty and not unmatched_sp2d.empty:
+    second_merge = unmatched_rk.merge(
+        unmatched_sp2d,
+        left_on=['jumlah', 'tanggal', 'skpd'],
+        right_on=['jumlah', 'tglsp2d', 'skpd'],
+        how='inner',
+        suffixes=('', '_y')
+    )
+    
+    if not second_merge.empty:
+        # Update data hasil merge kedua
+        merged.loc[second_merge.index, 'nosp2d'] = second_merge['nosp2d_y']
+        merged.loc[second_merge.index, 'tglsp2d'] = second_merge['tglsp2d_y']
+        merged.loc[second_merge.index, 'skpd'] = second_merge['skpd_y']
+        merged.loc[second_merge.index, 'status'] = 'Matched (Secondary)'
+        
+        # Update daftar SP2D yang digunakan
+        used_sp2d.update(second_merge['key_y'])
+        unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
+    
+    print("Second Merge DataFrame:")
+    print(second_merge[['tanggal', 'jumlah', 'nosp2d_6digits', 'key', 'nosp2d_y', 'status']].head())
+else:
+    print("Tidak ada data yang tersisa untuk merge kedua.")
+
+# Debugging preprocessing
+print("RK DataFrame after preprocessing:")
+print(rk_df[['tanggal', 'keterangan', 'jumlah']].head())
+print("SP2D DataFrame after preprocessing:")
+print(sp2d_df[['tglsp2d', 'nosp2d', 'jumlah']].head())
+
+# Debugging ekstraksi nomor SP2D
+print("RK DataFrame with extracted nosp2d_6digits:")
+print(rk_df[['keterangan', 'nosp2d_6digits']].head())
+print("SP2D DataFrame with nosp2d_6digits:")
+print(sp2d_df[['nosp2d', 'nosp2d_6digits']].head())
+
+# Debugging pembuatan kunci
+print("RK DataFrame with key:")
+print(rk_df[['nosp2d_6digits', 'jumlah', 'key']].head())
+print("SP2D DataFrame with key:")
+print(sp2d_df[['nosp2d_6digits', 'jumlah', 'key']].head())
+
+# Debugging merge primary
+print("Merged DataFrame primary:")
+print(merged[['tanggal', 'jumlah', 'nosp2d_6digits', 'key', 'nosp2d', 'status']].head())
+
+# Debugging merge secondary
+print("Second Merge DataFrame:")
+print(second_merge[['tanggal', 'jumlah', 'nosp2d_6digits', 'key', 'nosp2d_y', 'status']].head())
