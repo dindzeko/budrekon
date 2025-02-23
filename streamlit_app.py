@@ -52,15 +52,13 @@ def perform_vouching(rk_df, sp2d_df):
     )
     
     # Klasifikasi data
-    matched_mask = merged['nosp2d'].notna()
-    matched_rk = merged[matched_mask]
-    unmatched_rk = merged[~matched_mask]
+    merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
     
     # Identifikasi SP2D yang tidak terpakai
-    used_sp2d_keys = set(matched_rk['key'])
+    used_sp2d_keys = set(merged.loc[merged['status'] == 'Matched', 'key'])
     unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d_keys)]
     
-    return matched_rk, unmatched_rk, sp2d_df, unmatched_sp2d
+    return merged, unmatched_sp2d
 
 # Fungsi untuk membuat file Excel
 def to_excel(df_list, sheet_names):
@@ -108,18 +106,18 @@ if rk_file and sp2d_file:
         
         # Proses vouching
         with st.spinner('Memproses data...'):
-            matched_rk, unmatched_rk, sp2d_full, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
+            merged_rk, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
         
         # Tampilkan statistik
         st.subheader("Statistik")
         cols = st.columns(3)
-        cols[0].metric("RK Matched", len(matched_rk))
-        cols[1].metric("RK Unmatched", len(unmatched_rk))
+        cols[0].metric("RK Matched", len(merged_rk[merged_rk['status'] == 'Matched']))
+        cols[1].metric("RK Unmatched", len(merged_rk[merged_rk['status'] == 'Unmatched']))
         cols[2].metric("SP2D Unmatched", len(unmatched_sp2d))
         
         # Buat file Excel untuk di-download
-        df_list = [matched_rk, unmatched_rk, unmatched_sp2d]
-        sheet_names = ['Matched RK', 'Unmatched RK', 'Unmatched SP2D']
+        df_list = [merged_rk, unmatched_sp2d]
+        sheet_names = ['Rekening Koran (All)', 'SP2D Unmatched']
         excel_data = to_excel(df_list, sheet_names)
         
         # Tombol download
