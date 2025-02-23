@@ -66,12 +66,12 @@ def alternative_matching(unmatched_rk, sp2d_df):
     unmatched_rk = unmatched_rk.copy()
     sp2d_df = sp2d_df.copy()
     unmatched_rk['tanggal'] = pd.to_datetime(unmatched_rk['tanggal'], errors='coerce')
-    sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
-
+    sp2d_df['tglsp2d_alt'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce') #temporary column
+    
     matched_indices = []
     for rk_index, rk_row in unmatched_rk.iterrows():
         for sp2d_index, sp2d_row in sp2d_df.iterrows():
-            if rk_row['jumlah'] == sp2d_row['jumlah'] and rk_row['tanggal'].date() == sp2d_row['tglsp2d'].date():
+            if rk_row['jumlah'] == sp2d_row['jumlah'] and rk_row['tanggal'].date() == sp2d_row['tglsp2d_alt'].date():
                 matched_indices.append((rk_index, sp2d_index))
                 break  # Stop searching for this RK row once matched
 
@@ -88,7 +88,9 @@ def alternative_matching(unmatched_rk, sp2d_df):
     # Create a DataFrame for truly unmatched SP2D
     matched_sp2d_indices = [sp2d_index for _, sp2d_index in matched_indices]
     unmatched_sp2d = sp2d_df[~sp2d_df.index.isin(matched_sp2d_indices)]
-
+    
+    #Drop temporary column
+    sp2d_df = sp2d_df.drop('tglsp2d_alt', axis=1)
     return unmatched_rk, unmatched_sp2d
 
 # Fungsi untuk membuat file Excel
