@@ -12,8 +12,10 @@ def extract_sp2d_number(description):
 
 # Fungsi untuk membersihkan kolom jumlah
 def clean_amount_column(df, column_name):
-    # Hapus karakter non-numerik (misalnya, koma, titik, atau teks)
-    df[column_name] = df[column_name].astype(str).str.replace(r'[^\d]', '', regex=True)
+    # Hapus semua karakter non-numerik kecuali titik desimal
+    df[column_name] = df[column_name].astype(str).str.replace(r'[^\d.]', '', regex=True)
+    # Ganti titik desimal dengan string kosong jika ada lebih dari satu titik
+    df[column_name] = df[column_name].apply(lambda x: x.replace('.', '') if x.count('.') > 1 else x)
     # Konversi ke numerik
     df[column_name] = pd.to_numeric(df[column_name], errors='coerce')
     return df
@@ -51,7 +53,7 @@ def perform_vouching(rk_df, sp2d_df):
     
     # Proses matching utama berdasarkan nomor SP2D
     merged = rk_df.merge(
-        sp2d_df[['nosp2d_6digits', 'jumlah', 'tglsp2d', 'skpd', 'nosp2d']],
+        sp2d_df[['nosp2d_6digits', 'jumlah', 'tglsp2d', 'skpd', 'nosp2d']].drop_duplicates(),
         left_on=['nosp2d_6digits', 'jumlah'],
         right_on=['nosp2d_6digits', 'jumlah'],
         how='left',
@@ -67,7 +69,7 @@ def perform_vouching(rk_df, sp2d_df):
     
     # Proses matching alternatif berdasarkan jumlah dan tanggal
     unmatched_rk = unmatched_rk.merge(
-        sp2d_df[['jumlah', 'tglsp2d', 'skpd', 'nosp2d']],
+        sp2d_df[['jumlah', 'tglsp2d', 'skpd', 'nosp2d']].drop_duplicates(),
         left_on=['jumlah', 'tanggal'],
         right_on=['jumlah', 'tglsp2d'],
         how='left',
@@ -143,9 +145,23 @@ if rk_file and sp2d_file:
         st.write("Data SP2D:")
         st.dataframe(sp2d_df)
         
+        # Debugging: Periksa duplikasi di input
+        st.write("Duplikasi di Rekening Koran:")
+        st.write(rk_df[rk_df.duplicated(subset=['tanggal', 'keterangan', 'jumlah'], keep=False)])
+        st.write("Duplikasi di SP2D:")
+        st.write(sp2d_df[sp2d_df.duplicated(subset=['nosp2d', 'tglsp2d', 'jumlah'], keep=False)])
+        
+        # Debugging: Hitung total nilai RK awal
+        total_rk_awal = rk_df['jumlah'].sum()
+        st.write(f"Total Nilai RK Awal: {total_rk_awal:,.2f}")
+        
         # Proses vouching
         with st.spinner('Memproses data...'):
             all_rk, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
+        
+        # Debugging: Tampilkan hasil vouching
+        st.write("Hasil Vouching (RK):")
+        st.dataframe(all_rk.head())
         
         # Tampilkan statistik
         st.subheader("Statistik")
@@ -155,9 +171,7 @@ if rk_file and sp2d_file:
         cols[2].metric("SP2D Unmatched", len(unmatched_sp2d))
         
         # Cek total nilai RK awal dan hasil vouching
-        total_rk_awal = rk_df['jumlah'].sum()
         total_rk_hasil = all_rk['jumlah'].sum()
-        
         st.subheader("Validasi Total Nilai RK")
         st.write(f"Total Nilai RK Awal: {total_rk_awal:,.2f}")
         st.write(f"Total Nilai RK Hasil Vouching: {total_rk_hasil:,.2f}")
