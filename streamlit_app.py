@@ -62,6 +62,15 @@ def perform_vouching(rk_df, sp2d_df):
     
     return matched_rk, unmatched_rk, sp2d_df, unmatched_sp2d
 
+# Fungsi untuk membuat file Excel
+def to_excel(df_list, sheet_names):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        for df, sheet_name in zip(df_list, sheet_names):
+            df.to_excel(writer, index=False, sheet_name=sheet_name)
+    processed_data = output.getvalue()
+    return processed_data
+
 # UI
 st.title("Aplikasi Vouching SP2D vs Rekening Koran")
 
@@ -94,7 +103,6 @@ if rk_file and sp2d_file:
         # Debugging: Tampilkan isi DataFrame
         st.write("Data Rekening Koran:")
         st.dataframe(rk_df)
-
         st.write("Data SP2D:")
         st.dataframe(sp2d_df)
         
@@ -108,6 +116,19 @@ if rk_file and sp2d_file:
         cols[0].metric("RK Matched", len(matched_rk))
         cols[1].metric("RK Unmatched", len(unmatched_rk))
         cols[2].metric("SP2D Unmatched", len(unmatched_sp2d))
+        
+        # Buat file Excel untuk di-download
+        df_list = [matched_rk, unmatched_rk, unmatched_sp2d]
+        sheet_names = ['Matched RK', 'Unmatched RK', 'Unmatched SP2D']
+        excel_data = to_excel(df_list, sheet_names)
+        
+        # Tombol download
+        st.download_button(
+            label="Download Hasil Vouching",
+            data=excel_data,
+            file_name=f"vouching_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
         
     except Exception as e:
         st.error(f"Terjadi kesalahan: {str(e)}")
