@@ -60,12 +60,12 @@ def perform_vouching(rk_df, sp2d_df):
     unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
     unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
     
-    # Vouching kedua (jumlah + tanggal)
+    # Vouching kedua (jumlah + tanggal + SKPD)
     if not unmatched_rk.empty and not unmatched_sp2d.empty:
         second_merge = unmatched_rk.merge(
             unmatched_sp2d,
-            left_on=['jumlah', 'tanggal'],
-            right_on=['jumlah', 'tglsp2d'],
+            left_on=['jumlah', 'tanggal', 'skpd'],
+            right_on=['jumlah', 'tglsp2d', 'skpd'],
             how='inner',
             suffixes=('', '_y')
         )
@@ -105,7 +105,7 @@ if rk_file and sp2d_file:
         sp2d_df = pd.read_excel(sp2d_file)
         
         # Validasi kolom
-        required_rk = {'tanggal', 'keterangan', 'jumlah'}
+        required_rk = {'tanggal', 'keterangan', 'jumlah', 'skpd'}
         required_sp2d = {'skpd', 'nosp2d', 'tglsp2d', 'jumlah'}
         
         if not required_rk.issubset(rk_df.columns.str.lower()):
