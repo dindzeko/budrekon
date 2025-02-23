@@ -12,12 +12,21 @@ def preprocess_jumlah(series):
     return pd.to_numeric(series, errors='coerce')
 
 def extract_sp2d_number(description):
-    match = re.search(r'(?<!\d)\d{6}(?!\d)', str(description))
-    return match.group(0) if match else None
+    patterns = [
+        r'(?:SP2D|sp2d)[\s:/]*(\d{6})',
+        r'(?<!\d)\d{6}(?=/LS/)',
+        r'(?<!\d)\d{6}(?=\/.*DISHUB)',  # Contoh kasus DISHUB
+        r'\b\d{6}\b'                    # 6 digit standalone
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, str(description), re.IGNORECASE)
+        if match:
+            return match.group(1) if len(match.groups()) > 0 else match.group(0)
+    return None
 
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
-    # Preprocessing data
+    # Preprocessing
     rk_df = rk_df.copy()
     sp2d_df = sp2d_df.copy()
     
@@ -25,38 +34,41 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df.columns = rk_df.columns.str.strip().str.lower()
     sp2d_df.columns = sp2d_df.columns.str.strip().str.lower()
     
+    # Parsing tanggal
+    rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
+    sp2d_df['tglsp2d'] = pd.to_datetime(
+        sp2d_df['tglsp2d'],
+        format='%d/%m/%Y',
+        errors='coerce'
+    )
+    
     # Preprocessing jumlah
-    numeric_cols = ['jumlah']
-    for col in numeric_cols:
-        rk_df[col] = preprocess_jumlah(rk_df[col])
-        sp2d_df[col] = preprocess_jumlah(sp2d_df[col])
+    rk_df['jumlah'] = preprocess_jumlah(rk_df['jumlah'])
+    sp2d_df['jumlah'] = preprocess_jumlah(sp2d_df['jumlah'])
     
     # Ekstraksi SP2D
     rk_df['nosp2d_6digits'] = rk_df['keterangan'].apply(extract_sp2d_number)
-    sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[:6]
+    sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].str.extract(r'(\d{6})')
     
-    # Konversi tanggal
-    rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
-    sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
+    # Membuat kunci untuk merge pertama
+    rk_df['key'] = rk_df['nosp2d_6digits'].astype(str) + '_' + rk_df['jumlah'].astype(str)
+    sp2d_df['key'] = sp2d_df['nosp2d_6digits'].astype(str) + '_' + sp2d_df['jumlah'].astype(str)
     
-    # Membuat kunci
-    rk_df['key'] = rk_df['nosp2d_6digits'] + '_' + rk_df['jumlah'].astype(str)
-    sp2d_df['key'] = sp2d_df['nosp2d_6digits'] + '_' + sp2d_df['jumlah'].astype(str)
-    
-    # Vouching pertama (kunci SP2D + jumlah)
+    # Merge pertama
     merged = rk_df.merge(
         sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd']],
         on='key',
         how='left',
         suffixes=('', '_SP2D')
     )
-    merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
     
+    merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
+
     # Identifikasi data belum terhubung
     used_sp2d = set(merged.loc[merged['status'] == 'Matched', 'key'])
-    unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
-    unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
-    
+    unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)].copy()  # Copy
+    unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()  # Copy
+
     # Vouching kedua (jumlah + tanggal)
     if not unmatched_rk.empty and not unmatched_sp2d.empty:
         second_merge = unmatched_rk.merge(
@@ -76,7 +88,7 @@ def perform_vouching(rk_df, sp2d_df):
             
             # Update daftar SP2D yang digunakan
             used_sp2d.update(second_merge['key_y'])
-            unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
+            unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)].copy() # Copy
     
     return merged, unmatched_sp2d
 
