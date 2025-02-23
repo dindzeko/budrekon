@@ -84,6 +84,9 @@ def perform_vouching(rk_df, sp2d_df):
     # Gabungkan semua data RK dengan status
     all_rk = pd.concat([matched_final, unmatched_final])
     
+    # Pastikan tidak ada duplikasi baris RK
+    all_rk = all_rk.drop_duplicates(subset=all_rk.columns.difference(['status']), keep='first')
+    
     return all_rk, unmatched_sp2d
 
 # Fungsi untuk membuat file Excel
@@ -140,6 +143,17 @@ if rk_file and sp2d_file:
         cols[0].metric("RK Matched", len(all_rk[all_rk['status'].str.contains('Matched')]))
         cols[1].metric("RK Unmatched", len(all_rk[all_rk['status'] == 'Unmatched']))
         cols[2].metric("SP2D Unmatched", len(unmatched_sp2d))
+        
+        # Cek total nilai RK awal dan hasil vouching
+        total_rk_awal = rk_df['jumlah'].sum()
+        total_rk_hasil = all_rk['jumlah'].sum()
+        
+        st.subheader("Validasi Total Nilai RK")
+        st.write(f"Total Nilai RK Awal: {total_rk_awal:,.2f}")
+        st.write(f"Total Nilai RK Hasil Vouching: {total_rk_hasil:,.2f}")
+        
+        if total_rk_awal != total_rk_hasil:
+            st.warning("Perhatian: Total nilai RK awal dan hasil vouching tidak sesuai!")
         
         # Buat file Excel untuk di-download
         df_list = [all_rk, unmatched_sp2d]
