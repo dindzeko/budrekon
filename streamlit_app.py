@@ -57,7 +57,7 @@ def perform_vouching(rk_df, sp2d_df):
     unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
     unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
     
-    # Vouching kedua (jumlah + tanggal) - PERBAIKAN DISINI
+    # Vouching kedua (jumlah + tanggal)
     if not unmatched_rk.empty and not unmatched_sp2d.empty:
         # Lakukan merge dengan left join untuk menghindari duplikasi
         second_merge = unmatched_rk.merge(
@@ -65,7 +65,8 @@ def perform_vouching(rk_df, sp2d_df):
             left_on=['jumlah', 'tanggal'],
             right_on=['jumlah', 'tglsp2d'],
             how='left',
-            suffixes=('', '_y')
+            suffixes=('', '_y')  # Pastikan tanda kurung ditutup di sini
+        )
         
         # Hapus duplikat di sisi RK (ambil yang pertama)
         second_merge = second_merge.drop_duplicates(
@@ -97,6 +98,7 @@ def to_excel(df_list, sheet_names):
             df.to_excel(writer, index=False, sheet_name=sheet_name)
     return output.getvalue()
 
+# Streamlit App
 st.title("Aplikasi Vouching SP2D vs Rekening Koran (Enhanced)")
 
 rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
