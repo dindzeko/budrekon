@@ -5,26 +5,32 @@ from io import BytesIO
 from datetime import datetime
 
 def preprocess_jumlah(series):
-    """Fungsi untuk membersihkan format angka dengan separator"""
+    """Membersihkan format angka dengan separator"""
     series = series.astype(str)
-    series = series.str.replace(r'[.]', '', regex=True)  # Hapus separator ribuan
-    series = series.str.replace(',', '.', regex=False)    # Ganti desimal koma dengan titik
+    series = series.str.replace(r'[.,]', '', regex=True)
     return pd.to_numeric(series, errors='coerce')
 
 def extract_sp2d_number(description):
-    match = re.search(r'(?<!\d)\d{6}(?!\d)', str(description))
-    return match.group(0) if match else None
+    """Ekstrak 6 digit pertama nomor SP2D dari keterangan"""
+    matches = re.findall(r'\b\d{6}\b', str(description))
+    return matches[0] if matches else None
 
-def extract_skpd_keterangan(description):
-    """Ekstrak kode SKPD dari kolom keterangan RK"""
+def extract_skpd_code(description):
+    """Ekstrak kode SKPD dari keterangan RK"""
     parts = str(description).split('/')
-    if len(parts) >= 7:
-        return parts[6].strip()
+    if len(parts) >= 6:
+        return parts[5].strip().upper()
     return None
+
+def clean_skpd_name(name):
+    """Bersihkan nama SKPD dari angka dan prefix"""
+    name = re.sub(r'\d+\s*', '', str(name)).strip().upper()
+    name = re.sub(r'(KECAMATAN|KELURAHAN|Badan|Dinas)\s*', '', name)
+    return name.strip()
 
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
-    # Preprocessing data
+    # Normalisasi data
     rk_df = rk_df.copy()
     sp2d_df = sp2d_df.copy()
     
@@ -33,70 +39,52 @@ def perform_vouching(rk_df, sp2d_df):
     sp2d_df.columns = sp2d_df.columns.str.strip().str.lower()
     
     # Preprocessing jumlah
-    numeric_cols = ['jumlah']
-    for col in numeric_cols:
-        rk_df[col] = preprocess_jumlah(rk_df[col])
-        sp2d_df[col] = preprocess_jumlah(sp2d_df[col])
+    rk_df['jumlah'] = preprocess_jumlah(rk_df['jumlah'])
+    sp2d_df['jumlah'] = preprocess_jumlah(sp2d_df['jumlah'])
     
-    # Ekstraksi SP2D dan SKPD dari RK
+    # Ekstraksi data
     rk_df['nosp2d_6digits'] = rk_df['keterangan'].apply(extract_sp2d_number)
-    rk_df['skpd_keterangan'] = rk_df['keterangan'].apply(extract_skpd_keterangan)
+    rk_df['skpd_code'] = rk_df['keterangan'].apply(extract_skpd_code)
     
-    # Ekstraksi SP2D dari data SP2D
     sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[:6]
+    sp2d_df['skpd_code'] = sp2d_df['skpd'].apply(clean_skpd_name)
     
     # Konversi tanggal
     rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
     sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
     
-    # Membuat kunci utama
+    # Primary Matching: SP2D + Jumlah
     rk_df['key'] = rk_df['nosp2d_6digits'] + '_' + rk_df['jumlah'].astype(str)
     sp2d_df['key'] = sp2d_df['nosp2d_6digits'] + '_' + sp2d_df['jumlah'].astype(str)
     
-    # Vouching pertama (kunci SP2D + jumlah)
     merged = rk_df.merge(
-        sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd']],
+        sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd', 'skpd_code']],
         on='key',
         how='left',
-        suffixes=('', '_SP2D')
+        suffixes=('', '_sp2d')
     )
     merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
     
-    # Identifikasi data belum terhubung
-    used_sp2d = set(merged.loc[merged['status'] == 'Matched', 'key'])
-    unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
+    # Secondary Matching: Jumlah + Tanggal + SKPD
     unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
+    remaining_sp2d = sp2d_df[~sp2d_df['key'].isin(merged[merged['status'] == 'Matched']['key'])]
     
-    # Vouching kedua (jumlah + tanggal + validasi nomor SP2D dalam keterangan)
-    if not unmatched_rk.empty and not unmatched_sp2d.empty:
-        second_merge = unmatched_rk.merge(
-            unmatched_sp2d,
-            left_on=['jumlah', 'tanggal'],
-            right_on=['jumlah', 'tglsp2d'],
+    if not unmatched_rk.empty and not remaining_sp2d.empty:
+        secondary_merge = unmatched_rk.merge(
+            remaining_sp2d,
+            left_on=['jumlah', 'tanggal', 'skpd_code'],
+            right_on=['jumlah', 'tglsp2d', 'skpd_code'],
             how='inner',
             suffixes=('', '_y')
-        )
         
-        # Filter: Pastikan nomor SP2D dari SP2D muncul di keterangan RK
-        if not second_merge.empty:
-            mask = second_merge.apply(
-                lambda row: str(row['nosp2d_6digits_y']) in str(row['keterangan']),
-                axis=1
-            )
-            second_merge = second_merge[mask]
-            
-            if not second_merge.empty:
-                # Update hasil dengan data SP2D yang valid
-                merged.loc[second_merge.index, 'nosp2d'] = second_merge['nosp2d_y']
-                merged.loc[second_merge.index, 'tglsp2d'] = second_merge['tglsp2d_y']
-                merged.loc[second_merge.index, 'skpd'] = second_merge['skpd_y']
-                merged.loc[second_merge.index, 'status'] = 'Matched (Secondary)'
-                
-                # Update daftar SP2D yang digunakan
-                used_sp2d.update(second_merge['key_y'])
-                unmatched_sp2d = sp2d_df[~sp2d_df['key'].isin(used_sp2d)]
+        # Update hasil tanpa validasi nomor SP2D
+        if not secondary_merge.empty:
+            merged.loc[secondary_merge.index, 'nosp2d'] = secondary_merge['nosp2d_y']
+            merged.loc[secondary_merge.index, 'tglsp2d'] = secondary_merge['tglsp2d_y']
+            merged.loc[secondary_merge.index, 'skpd'] = secondary_merge['skpd_y']
+            merged.loc[secondary_merge.index, 'status'] = 'Matched (Secondary)'
     
-    return merged, unmatched_sp2d
+    return merged, remaining_sp2d
 
 def to_excel(df_list, sheet_names):
     output = BytesIO()
@@ -105,52 +93,69 @@ def to_excel(df_list, sheet_names):
             df.to_excel(writer, index=False, sheet_name=sheet_name)
     return output.getvalue()
 
-st.title("Aplikasi Vouching SP2D vs Rekening Koran (Enhanced)")
+# UI Streamlit
+st.title("🔄 Aplikasi Vouching SP2D - Rekening Koran")
 
-rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
-sp2d_file = st.file_uploader("Upload SP2D", type="xlsx")
+# Upload file
+col1, col2 = st.columns(2)
+with col1:
+    rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
+with col2:
+    sp2d_file = st.file_uploader("Upload Data SP2D", type="xlsx")
 
 if rk_file and sp2d_file:
     try:
+        # Load data
         rk_df = pd.read_excel(rk_file)
         sp2d_df = pd.read_excel(sp2d_file)
         
         # Validasi kolom
         required_rk = {'tanggal', 'keterangan', 'jumlah'}
-        required_sp2d = {'skpd', 'nosp2d', 'tglsp2d', 'jumlah'}
+        required_sp2d = {'nosp2d', 'tglsp2d', 'jumlah', 'skpd'}
         
         if not required_rk.issubset(rk_df.columns.str.lower()):
-            st.error(f"Kolom Rekening Koran tidak valid! Harus ada: {required_rk}")
+            st.error(f"Kolom RK harus mengandung: {required_rk}")
             st.stop()
             
         if not required_sp2d.issubset(sp2d_df.columns.str.lower()):
-            st.error(f"Kolom SP2D tidak valid! Harus ada: {required_sp2d}")
+            st.error(f"Kolom SP2D harus mengandung: {required_sp2d}")
             st.stop()
-        
+            
         # Proses vouching
-        with st.spinner('Memproses data...'):
-            merged_rk, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
+        with st.spinner('🔍 Memproses data...'):
+            result_df, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
         
-        # Statistik
-        st.subheader("Statistik")
+        # Tampilkan statistik
+        st.subheader("📊 Hasil Vouching")
         cols = st.columns(4)
-        cols[0].metric("Total RK", len(merged_rk))
-        cols[1].metric("Matched (Primary)", len(merged_rk[merged_rk['status'] == 'Matched']))
-        cols[2].metric("Matched (Secondary)", len(merged_rk[merged_rk['status'] == 'Matched (Secondary)']))
-        cols[3].metric("Unmatched SP2D", len(unmatched_sp2d))
+        cols[0].metric("Total Transaksi", len(result_df))
+        cols[1].metric("Terekoniliasi (Primer)", 
+                      len(result_df[result_df['status'] == 'Matched']),
+                      help="Match berdasarkan SP2D + Jumlah")
+        cols[2].metric("Terekoniliasi (Sekunder)", 
+                      len(result_df[result_df['status'] == 'Matched (Secondary)']),
+                      help="Match berdasarkan Jumlah + Tanggal + SKPD")
+        cols[3].metric("SP2D Belum Terpakai", 
+                      len(unmatched_sp2d),
+                      help="SP2D yang tidak memiliki transaksi terkait")
+        
+        # Tampilkan preview
+        with st.expander("🔎 Lihat Detail Hasil"):
+            st.dataframe(result_df)
         
         # Download hasil
-        df_list = [merged_rk, unmatched_sp2d]
-        sheet_names = ['Hasil Vouching', 'SP2D Belum Terpakai']
-        excel_data = to_excel(df_list, sheet_names)
+        excel_data = to_excel(
+            [result_df, unmatched_sp2d],
+            ['Hasil Vouching', 'SP2D Belum Terpakai']
+        )
         
         st.download_button(
-            label="Download Hasil",
+            label="📥 Download Hasil Lengkap",
             data=excel_data,
-            file_name=f"vouching_enhanced_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            file_name=f"vouching_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        st.error(f"❌ Error: {str(e)}")
         st.stop()
