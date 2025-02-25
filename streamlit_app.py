@@ -5,27 +5,31 @@ from io import BytesIO
 from datetime import datetime
 
 def preprocess_jumlah(series):
+    """Membersihkan dan mengubah kolom jumlah menjadi numerik."""
     series = series.astype(str).str.replace(r'[^\d]', '', regex=True)
-    return pd.to_numeric(series, series='coerce')
+    return pd.to_numeric(series, errors='coerce')
 
 def extract_sp2d_number(description):
+    """Ekstrak nomor SP2D 6 digit dari deskripsi."""
     if pd.isna(description):
         return None
     matches = re.findall(r'\b\d{6}\b', str(description))
     return matches[0] if matches else None
 
 def clean_skpd_name(name):
+    """Membersihkan nama SKPD dari angka dan kata-kata umum."""
     if pd.isna(name):
         return None
-    name = str(name) #pastikan input selalu string
+    name = str(name)  # Pastikan input selalu string
     name = re.sub(r'\d+', '', name).strip().upper()
     name = re.sub(r'(KECAMATAN|KELURAHAN|BADAN|DINAS)\s*', '', name, flags=re.IGNORECASE)
     return name.strip()
 
 def extract_skpd_code(description):
+    """Ekstrak kode SKPD dari deskripsi."""
     if pd.isna(description):
         return None
-    description = str(description) #pastikan input selalu string
+    description = str(description)  # Pastikan input selalu string
     parts = description.split('/')
     if len(parts) >= 6:
         return clean_skpd_name(parts[5])
@@ -33,6 +37,8 @@ def extract_skpd_code(description):
 
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
+    """Melakukan proses vouching antara data RK dan SP2D."""
+
     # Debugging kolom SP2D
     st.write("### Debugging Kolom SP2D")
     st.write("Kolom SP2D awal:", sp2d_df.columns.tolist())
@@ -92,8 +98,8 @@ def perform_vouching(rk_df, sp2d_df):
     merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
 
     # Secondary matching
-    unmatched_rk = merged[merged['status'] == 'Unmatched'].copy() #buat copy untuk menghindari SettingWithCopyWarning
-    remaining_sp2d = sp2d_df[~sp2d_df['key'].isin(merged['key'])].copy() #buat copy untuk menghindari SettingWithCopyWarning
+    unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()  # buat copy untuk menghindari SettingWithCopyWarning
+    remaining_sp2d = sp2d_df[~sp2d_df['key'].isin(merged['key'])].copy()  # buat copy untuk menghindari SettingWithCopyWarning
 
     if not unmatched_rk.empty and not remaining_sp2d.empty:
         secondary_merge = unmatched_rk.merge(
@@ -113,10 +119,10 @@ def perform_vouching(rk_df, sp2d_df):
             # Hapus data yang sudah di match dari remaining_sp2d
             remaining_sp2d = remaining_sp2d[~remaining_sp2d['key'].isin(secondary_merge['key_y'])]
 
-
     return merged, remaining_sp2d
 
 def to_excel(df_list, sheet_names):
+    """Membuat file Excel dari daftar DataFrame."""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         for df, sheet in zip(df_list, sheet_names):
