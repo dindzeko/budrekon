@@ -12,17 +12,23 @@ def preprocess_jumlah(series):
 
 def extract_sp2d_number(description):
     """Ekstrak 6 digit pertama nomor SP2D dari keterangan"""
+    if pd.isna(description):
+        return None
     matches = re.findall(r'\b\d{6}\b', str(description))
     return matches[0] if matches else None
 
 def clean_skpd_name(name):
     """Bersihkan nama SKPD dari angka dan prefix"""
+    if pd.isna(name):
+        return None
     name = re.sub(r'\d+\s*', '', str(name)).strip().upper()
-    name = re.sub(r'(KECAMATAN|KELURAHAN|BADAN|DINAS)\s*', '', name)
+    name = re.sub(r'(?:KECAMATAN|KELURAHAN|BADAN|DINAS)\s*', '', name, flags=re.IGNORECASE)
     return name.strip()
 
 def extract_skpd_code(description):
     """Ekstrak dan bersihkan nama SKPD dari keterangan RK"""
+    if pd.isna(description):
+        return None
     parts = str(description).split('/')
     if len(parts) >= 6:
         skpd_part = parts[5].strip().upper()
@@ -35,7 +41,11 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df = rk_df.copy()
     sp2d_df = sp2d_df.copy()
     
-    # Normalisasi kolom
+    # Validasi kolom penting
+    if 'skpd' not in sp2d_df.columns.str.lower():
+        raise ValueError("Kolom 'skpd' tidak ditemukan di data SP2D")
+    
+    # Normalisasi nama kolom
     rk_df.columns = rk_df.columns.str.strip().str.lower()
     sp2d_df.columns = sp2d_df.columns.str.strip().str.lower()
     
@@ -43,7 +53,7 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df['jumlah'] = preprocess_jumlah(rk_df['jumlah'])
     sp2d_df['jumlah'] = preprocess_jumlah(sp2d_df['jumlah'])
     
-    # Ekstraksi data
+    # Ekstraksi informasi
     rk_df['nosp2d_6digits'] = rk_df['keterangan'].apply(extract_sp2d_number)
     rk_df['skpd_code'] = rk_df['keterangan'].apply(extract_skpd_code)
     
@@ -55,8 +65,8 @@ def perform_vouching(rk_df, sp2d_df):
     sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
     
     # Primary Matching: SP2D + Jumlah
-    rk_df['key'] = rk_df['nosp2d_6digits'] + '_' + rk_df['jumlah'].astype(str)
-    sp2d_df['key'] = sp2d_df['nosp2d_6digits'] + '_' + sp2d_df['jumlah'].astype(str)
+    rk_df['key'] = rk_df['nosp2d_6digits'].astype(str) + '_' + rk_df['jumlah'].astype(str)
+    sp2d_df['key'] = sp2d_df['nosp2d_6digits'].astype(str) + '_' + sp2d_df['jumlah'].astype(str)
     
     merged = rk_df.merge(
         sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd_code']],
@@ -100,8 +110,8 @@ def to_excel(df_list, sheet_names):
 
 # UI Streamlit
 st.title("🔄 Aplikasi Vouching SP2D - Rekening Koran (Enhanced)")
-
 col1, col2 = st.columns(2)
+
 with col1:
     rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
 with col2:
@@ -113,7 +123,7 @@ if rk_file and sp2d_file:
         rk_df = pd.read_excel(rk_file)
         sp2d_df = pd.read_excel(sp2d_file)
         
-        # Validasi kolom
+        # Validasi kolom wajib
         required_rk = {'tanggal', 'keterangan', 'jumlah'}
         required_sp2d = {'nosp2d', 'tglsp2d', 'jumlah', 'skpd'}
         
@@ -124,7 +134,7 @@ if rk_file and sp2d_file:
         if not required_sp2d.issubset(sp2d_df.columns.str.lower()):
             st.error(f"Kolom SP2D harus mengandung: {required_sp2d}")
             st.stop()
-            
+        
         # Proses vouching
         with st.spinner('🔍 Memproses data...'):
             result_df, unmatched_sp2d = perform_vouching(rk_df, sp2d_df)
