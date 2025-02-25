@@ -41,30 +41,55 @@ def perform_vouching(rk_df, sp2d_df):
     rk_df = rk_df.copy()
     sp2d_df = sp2d_df.copy()
     
-    # Validasi kolom penting
-    if 'skpd' not in sp2d_df.columns.str.lower():
-        raise ValueError("Kolom 'skpd' tidak ditemukan di data SP2D")
+    # Tampilkan kolom untuk debugging
+    st.write("### Debugging Kolom SP2D")
+    st.write("Kolom SP2D sebelum normalisasi:", sp2d_df.columns.tolist())
     
     # Normalisasi nama kolom
     rk_df.columns = rk_df.columns.str.strip().str.lower()
     sp2d_df.columns = sp2d_df.columns.str.strip().str.lower()
     
+    st.write("Kolom SP2D setelah normalisasi:", sp2d_df.columns.tolist())
+    
+    # Validasi kolom penting
+    if 'skpd' not in sp2d_df.columns:
+        raise ValueError(f"""
+        🔴 Kolom 'skpd' tidak ditemukan di data SP2D.
+        Kolom yang tersedia: {list(sp2d_df.columns)}
+        """)
+    
     # Preprocessing jumlah
-    rk_df['jumlah'] = preprocess_jumlah(rk_df['jumlah'])
-    sp2d_df['jumlah'] = preprocess_jumlah(sp2d_df['jumlah'])
+    try:
+        rk_df['jumlah'] = preprocess_jumlah(rk_df['jumlah'])
+        sp2d_df['jumlah'] = preprocess_jumlah(sp2d_df['jumlah'])
+    except Exception as e:
+        st.error(f"❌ Error saat memproses kolom jumlah: {str(e)}")
+        st.write("Contoh data jumlah RK:", rk_df['jumlah'].head())
+        st.write("Contoh data jumlah SP2D:", sp2d_df['jumlah'].head())
+        raise
     
     # Ekstraksi informasi
-    rk_df['nosp2d_6digits'] = rk_df['keterangan'].apply(extract_sp2d_number)
-    rk_df['skpd_code'] = rk_df['keterangan'].apply(extract_skpd_code)
+    try:
+        rk_df['nosp2d_6digits'] = rk_df['keterangan'].apply(extract_sp2d_number)
+        rk_df['skpd_code'] = rk_df['keterangan'].apply(extract_skpd_code)
+    except Exception as e:
+        st.error(f"❌ Error saat mengekstrak data RK: {str(e)}")
+        st.write("Contoh keterangan RK:", rk_df['keterangan'].head().tolist())
+        raise
     
-    sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[:6]
-    sp2d_df['skpd_code'] = sp2d_df['skpd'].apply(clean_skpd_name)
+    try:
+        sp2d_df['nosp2d_6digits'] = sp2d_df['nosp2d'].astype(str).str[:6]
+        sp2d_df['skpd_code'] = sp2d_df['skpd'].apply(clean_skpd_name)
+    except Exception as e:
+        st.error(f"❌ Error saat memproses data SP2D: {str(e)}")
+        st.write("Contoh data SP2D:", sp2d_df.head())
+        raise
     
     # Konversi tanggal
     rk_df['tanggal'] = pd.to_datetime(rk_df['tanggal'], errors='coerce')
     sp2d_df['tglsp2d'] = pd.to_datetime(sp2d_df['tglsp2d'], errors='coerce')
     
-    # Primary Matching: SP2D + Jumlah
+    # Primary Matching
     rk_df['key'] = rk_df['nosp2d_6digits'].astype(str) + '_' + rk_df['jumlah'].astype(str)
     sp2d_df['key'] = sp2d_df['nosp2d_6digits'].astype(str) + '_' + sp2d_df['jumlah'].astype(str)
     
@@ -75,11 +100,11 @@ def perform_vouching(rk_df, sp2d_df):
         suffixes=('', '_sp2d')
     )
     
-    # Update SKPD dengan data SP2D
+    # Update SKPD
     merged['skpd'] = merged['skpd_code_sp2d'].combine_first(merged['skpd'])
     merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
     
-    # Secondary Matching: Jumlah + Tanggal
+    # Secondary Matching
     unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
     remaining_sp2d = sp2d_df[~sp2d_df['key'].isin(merged['key'])]
     
@@ -93,7 +118,6 @@ def perform_vouching(rk_df, sp2d_df):
         )
         
         if not secondary_merge.empty:
-            # Update kolom hasil secondary match
             merged.loc[secondary_merge.index, 'nosp2d'] = secondary_merge['nosp2d_y']
             merged.loc[secondary_merge.index, 'tglsp2d'] = secondary_merge['tglsp2d_y']
             merged.loc[secondary_merge.index, 'skpd'] = secondary_merge['skpd_code_y']
@@ -109,9 +133,10 @@ def to_excel(df_list, sheet_names):
     return output.getvalue()
 
 # UI Streamlit
-st.title("🔄 Aplikasi Vouching SP2D - Rekening Koran (Enhanced)")
-col1, col2 = st.columns(2)
+st.title("🔄 Aplikasi Vouching SP2D - Rekening Koran (Debug Mode)")
+st.warning("⚠️ Mode debugging aktif - Beberapa data contoh akan ditampilkan")
 
+col1, col2 = st.columns(2)
 with col1:
     rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
 with col2:
@@ -123,16 +148,29 @@ if rk_file and sp2d_file:
         rk_df = pd.read_excel(rk_file)
         sp2d_df = pd.read_excel(sp2d_file)
         
+        # Tampilkan preview data untuk debugging
+        with st.expander("🔍 Data Mentah RK (5 baris pertama)"):
+            st.write(rk_df.head())
+            
+        with st.expander("🔍 Data Mentah SP2D (5 baris pertama)"):
+            st.write(sp2d_df.head())
+        
         # Validasi kolom wajib
         required_rk = {'tanggal', 'keterangan', 'jumlah'}
         required_sp2d = {'nosp2d', 'tglsp2d', 'jumlah', 'skpd'}
         
-        if not required_rk.issubset(rk_df.columns.str.lower()):
-            st.error(f"Kolom RK harus mengandung: {required_rk}")
+        # Cek kolom RK
+        missing_rk = required_rk - set(rk_df.columns.str.lower())
+        if missing_rk:
+            st.error(f"❌ Kolom RK tidak lengkap: {missing_rk}")
+            st.write("Kolom yang tersedia:", rk_df.columns.tolist())
             st.stop()
             
-        if not required_sp2d.issubset(sp2d_df.columns.str.lower()):
-            st.error(f"Kolom SP2D harus mengandung: {required_sp2d}")
+        # Cek kolom SP2D
+        missing_sp2d = required_sp2d - set(sp2d_df.columns.str.lower())
+        if missing_sp2d:
+            st.error(f"❌ Kolom SP2D tidak lengkap: {missing_sp2d}")
+            st.write("Kolom yang tersedia:", sp2d_df.columns.tolist())
             st.stop()
         
         # Proses vouching
@@ -168,5 +206,8 @@ if rk_file and sp2d_file:
         )
         
     except Exception as e:
-        st.error(f"❌ Error: {str(e)}")
+        st.error(f"❌ Error Kritikal: {str(e)}")
+        st.write("Informasi Debugging:")
+        st.write("Tipe error:", type(e).__name__)
+        st.write("Pesan error:", str(e))
         st.stop()
