@@ -64,8 +64,8 @@ def perform_vouching(rk_df, sp2d_df):
         suffixes=('', '_sp2d')
     )
     
-    # Perbaikan 1: Update SKPD dengan data dari SP2D
-    merged['skpd'] = merged['skpd_code_sp2d'].combine_first(merged['skpd'])
+    # Update SKPD dengan data dari SP2D jika ada
+    merged['skpd'] = merged['skpd_sp2d'].combine_first(merged['skpd'])
     merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
     
     # Secondary Matching: Jumlah + Tanggal + SKPD
@@ -81,11 +81,11 @@ def perform_vouching(rk_df, sp2d_df):
             suffixes=('', '_y')
         )
         
-        # Perbaikan 2: Update SKPD dengan data dari secondary match
+        # Perbaikan: Gunakan kolom 'skpd_y' dari hasil merge
         if not secondary_merge.empty:
             merged.loc[secondary_merge.index, 'nosp2d'] = secondary_merge['nosp2d_y']
             merged.loc[secondary_merge.index, 'tglsp2d'] = secondary_merge['tglsp2d_y']
-            merged.loc[secondary_merge.index, 'skpd'] = secondary_merge['skpd_code_y']  # Gunakan skpd_code
+            merged.loc[secondary_merge.index, 'skpd'] = secondary_merge['skpd_y']  # Diperbaiki
             merged.loc[secondary_merge.index, 'status'] = 'Matched (Secondary)'
     
     return merged, remaining_sp2d
