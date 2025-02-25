@@ -63,6 +63,9 @@ def perform_vouching(rk_df, sp2d_df):
         how='left',
         suffixes=('', '_sp2d')
     )
+    
+    # Perbaikan 1: Update SKPD dengan data dari SP2D
+    merged['skpd'] = merged['skpd_code_sp2d'].combine_first(merged['skpd'])
     merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
     
     # Secondary Matching: Jumlah + Tanggal + SKPD
@@ -76,13 +79,13 @@ def perform_vouching(rk_df, sp2d_df):
             right_on=['jumlah', 'tglsp2d', 'skpd_code'],
             how='inner',
             suffixes=('', '_y')
-        )  # Perbaikan: tambahkan tanda kurung penutup di sini
+        )
         
-        # Update hasil tanpa validasi nomor SP2D
+        # Perbaikan 2: Update SKPD dengan data dari secondary match
         if not secondary_merge.empty:
             merged.loc[secondary_merge.index, 'nosp2d'] = secondary_merge['nosp2d_y']
             merged.loc[secondary_merge.index, 'tglsp2d'] = secondary_merge['tglsp2d_y']
-            merged.loc[secondary_merge.index, 'skpd'] = secondary_merge['skpd_y']
+            merged.loc[secondary_merge.index, 'skpd'] = secondary_merge['skpd_code_y']  # Gunakan skpd_code
             merged.loc[secondary_merge.index, 'status'] = 'Matched (Secondary)'
     
     return merged, remaining_sp2d
@@ -95,7 +98,7 @@ def to_excel(df_list, sheet_names):
     return output.getvalue()
 
 # UI Streamlit
-st.title("🔄 Aplikasi Vouching SP2D - Rekening Koran")
+st.title("🔄 Aplikasi Vouching SP2D - Rekening Koran (Enhanced)")
 
 # Upload file
 col1, col2 = st.columns(2)
