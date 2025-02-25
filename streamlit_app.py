@@ -15,18 +15,19 @@ def extract_sp2d_number(description):
     matches = re.findall(r'\b\d{6}\b', str(description))
     return matches[0] if matches else None
 
-def extract_skpd_code(description):
-    """Ekstrak kode SKPD dari keterangan RK"""
-    parts = str(description).split('/')
-    if len(parts) >= 6:
-        return parts[5].strip().upper()
-    return None
-
 def clean_skpd_name(name):
     """Bersihkan nama SKPD dari angka dan prefix"""
     name = re.sub(r'\d+\s*', '', str(name)).strip().upper()
-    name = re.sub(r'(KECAMATAN|KELURAHAN|Badan|Dinas)\s*', '', name)
+    name = re.sub(r'(KECAMATAN|KELURAHAN|BADAN|DINAS)\s*', '', name)
     return name.strip()
+
+def extract_skpd_code(description):
+    """Ekstrak dan bersihkan nama SKPD dari keterangan RK"""
+    parts = str(description).split('/')
+    if len(parts) >= 6:
+        skpd_part = parts[5].strip().upper()
+        return clean_skpd_name(skpd_part)
+    return None
 
 @st.cache_data
 def perform_vouching(rk_df, sp2d_df):
@@ -58,34 +59,34 @@ def perform_vouching(rk_df, sp2d_df):
     sp2d_df['key'] = sp2d_df['nosp2d_6digits'] + '_' + sp2d_df['jumlah'].astype(str)
     
     merged = rk_df.merge(
-        sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd', 'skpd_code']],
+        sp2d_df[['key', 'nosp2d', 'tglsp2d', 'skpd_code']],
         on='key',
         how='left',
         suffixes=('', '_sp2d')
     )
     
-    # Update SKPD dengan data dari SP2D jika ada
-    merged['skpd'] = merged['skpd_sp2d'].combine_first(merged['skpd'])
+    # Update SKPD dengan data SP2D
+    merged['skpd'] = merged['skpd_code_sp2d'].combine_first(merged['skpd'])
     merged['status'] = merged['nosp2d'].notna().map({True: 'Matched', False: 'Unmatched'})
     
-    # Secondary Matching: Jumlah + Tanggal + SKPD
+    # Secondary Matching: Jumlah + Tanggal
     unmatched_rk = merged[merged['status'] == 'Unmatched'].copy()
-    remaining_sp2d = sp2d_df[~sp2d_df['key'].isin(merged[merged['status'] == 'Matched']['key'])]
+    remaining_sp2d = sp2d_df[~sp2d_df['key'].isin(merged['key'])]
     
     if not unmatched_rk.empty and not remaining_sp2d.empty:
         secondary_merge = unmatched_rk.merge(
             remaining_sp2d,
-            left_on=['jumlah', 'tanggal', 'skpd_code'],
-            right_on=['jumlah', 'tglsp2d', 'skpd_code'],
+            left_on=['jumlah', 'tanggal'],
+            right_on=['jumlah', 'tglsp2d'],
             how='inner',
             suffixes=('', '_y')
         )
         
-        # Perbaikan: Gunakan kolom 'skpd_y' dari hasil merge
         if not secondary_merge.empty:
+            # Update kolom hasil secondary match
             merged.loc[secondary_merge.index, 'nosp2d'] = secondary_merge['nosp2d_y']
             merged.loc[secondary_merge.index, 'tglsp2d'] = secondary_merge['tglsp2d_y']
-            merged.loc[secondary_merge.index, 'skpd'] = secondary_merge['skpd_y']  # Diperbaiki
+            merged.loc[secondary_merge.index, 'skpd'] = secondary_merge['skpd_code_y']
             merged.loc[secondary_merge.index, 'status'] = 'Matched (Secondary)'
     
     return merged, remaining_sp2d
@@ -100,7 +101,6 @@ def to_excel(df_list, sheet_names):
 # UI Streamlit
 st.title("🔄 Aplikasi Vouching SP2D - Rekening Koran (Enhanced)")
 
-# Upload file
 col1, col2 = st.columns(2)
 with col1:
     rk_file = st.file_uploader("Upload Rekening Koran", type="xlsx")
@@ -134,14 +134,11 @@ if rk_file and sp2d_file:
         cols = st.columns(4)
         cols[0].metric("Total Transaksi", len(result_df))
         cols[1].metric("Terekoniliasi (Primer)", 
-                      len(result_df[result_df['status'] == 'Matched']),
-                      help="Match berdasarkan SP2D + Jumlah")
+                      len(result_df[result_df['status'] == 'Matched']))
         cols[2].metric("Terekoniliasi (Sekunder)", 
-                      len(result_df[result_df['status'] == 'Matched (Secondary)']),
-                      help="Match berdasarkan Jumlah + Tanggal + SKPD")
+                      len(result_df[result_df['status'] == 'Matched (Secondary)']))
         cols[3].metric("SP2D Belum Terpakai", 
-                      len(unmatched_sp2d),
-                      help="SP2D yang tidak memiliki transaksi terkait")
+                      len(unmatched_sp2d))
         
         # Tampilkan preview
         with st.expander("🔎 Lihat Detail Hasil"):
